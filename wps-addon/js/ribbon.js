@@ -54,7 +54,7 @@ function OnAction(control) {
               "2. 设置页显示的端口是不是 " +
               TYPESTAT_CONFIG.port +
               "？\n" +
-              "3. 设置页的令牌和 js/config.js 里的是否一致？重新生成过就要重跑 install.mjs。"
+              "3. 适配器页的令牌和 js/config.js 里的是否一致？重新生成过就在那一页点「重新装一次」。"
           );
         }
       });

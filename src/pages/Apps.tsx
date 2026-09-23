@@ -1,30 +1,50 @@
 import { useEffect, useMemo, useState } from "react";
 import * as api from "../lib/api";
+import { dayWord, shortDate } from "../lib/dates";
 import { num, resolveMode, shortName, unitOf, type MetricMode } from "../lib/metrics";
 
 /** 排行榜最多显示这么多条，超出的折进「其他」而不是继续堆颜色。 */
 export const TOP_N = 10;
 
 /**
- * 今天在哪儿打得多。
+ * 这一天在哪儿打得多。
  *
  * 字数口径下最危险的一件事，是把没有适配器的应用显示成 0——
  * 那不是「没打字」，是「量不到」。从图里排除掉，并在正文里点名，
  * 明细页里则完整列出（那里显示「—」）。
+ *
+ * `day` 可以是过去的日子，所以页面上不能出现写死的「今天」——用 `when` / `thatDay`。
  */
 export function Apps({
   day,
+  today,
   revision,
   metric,
 }: {
   day: string;
+  today: string;
   revision: number;
   metric: MetricMode;
 }) {
   const [apps, setApps] = useState<api.AppPoint[] | null>(null);
 
+  const isToday = day === today;
+  const when = dayWord(day, today);
+  const thatDay = isToday ? "今天" : `${shortDate(day)} 那天`;
+
   useEffect(() => {
-    api.appBreakdown(day).then(setApps).catch(console.error);
+    // `alive` 那道闸门见 `Keys.tsx`：`day` 现在会在运行时变（跨过午夜或翻日期），
+    // 而请求是并发的，迟到的那次会让排行榜排的是另一天。
+    let alive = true;
+    api
+      .appBreakdown(day)
+      .then((r) => {
+        if (alive) setApps(r);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
   }, [day, revision]);
 
   /**
@@ -56,16 +76,16 @@ export function Apps({
   if (apps.length === 0) {
     return (
       <section className="page">
-        <p className="eyebrow">应用 · 今天</p>
-        <h2 className="sec">今天在哪儿打得多</h2>
-        <div className="empty">今天还没有记录到输入</div>
+        <p className="eyebrow">应用 · {when}</p>
+        <h2 className="sec">{thatDay}在哪儿打得多</h2>
+        <div className="empty">{when}还没有记录到输入</div>
       </section>
     );
   }
 
   return (
     <section className="page">
-      <p className="eyebrow">应用 · 今天</p>
+      <p className="eyebrow">应用 · {when}</p>
       <h2 className="sec">{precise ? "字数都写在哪儿了" : "按键都敲在哪儿了"}</h2>
       <p className="sub">
         {precise
@@ -76,7 +96,7 @@ export function Apps({
 
       {fellBack && (
         <p className="note">
-          今天还没有任何<b>精确字数</b>数据（没装适配器，或装了还没敲过字），
+          {when}还没有任何<b>精确字数</b>数据（没装适配器，或装了还没敲过字），
           下面显示的是<b>按键数</b>。
         </p>
       )}
@@ -120,7 +140,7 @@ export function Apps({
         <p className="caption">
           <b>已排除 {excluded.length} 个只有按键数的应用</b>：
           {excluded.map((a) => shortName(a.app)).join("、")}。
-          <b>排除不等于没写</b>——它们今天也有输入，只是拿不到精确字数。
+          <b>排除不等于没写</b>——它们{when}也有输入，只是拿不到精确字数。
           把它们画进这张图，要么得写 0（谎话），要么得混进另一种单位（读不了）。
           切到「按键」口径能看到全部。
         </p>
@@ -128,7 +148,7 @@ export function Apps({
 
       <p className="caption">
         判定一个应用「有没有精确字数」，看的是<b>有没有适配器上报过</b>，
-        不是「字数大于 0」。一个装了适配器但今天没写字的应用，
+        不是「字数大于 0」。一个装了适配器但{when}没写字的应用，
         和另一个没装适配器的应用，是两件不同的事——
         前者是 0，后者是量不到。
       </p>

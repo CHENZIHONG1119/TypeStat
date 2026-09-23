@@ -28,8 +28,20 @@ export function Heat({ day, revision, days }: { day: string; revision: number; d
   const from = api.shiftDay(day, -(showDays - 1));
 
   useEffect(() => {
+    // `alive` 这道闸门见 `Keys.tsx`。`day` 现在会在运行时变（跨过午夜），
+    // 而请求是并发的：切到新的一天时，上一天的请求可能后回来，
+    // 把新数据盖成旧的——屏幕上就是「日期写着今天、格子是昨天的」。
+    let alive = true;
     setCells(null);
-    api.cellGrid(from, day).then(setCells).catch(console.error);
+    api
+      .cellGrid(from, day)
+      .then((r) => {
+        if (alive) setCells(r);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
   }, [from, day, revision]);
 
   const view = useMemo(() => {

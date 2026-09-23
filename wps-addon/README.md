@@ -12,16 +12,17 @@
 
 ## 装
 
-```bash
-node wps-addon/install.mjs
-```
-
-脚本会从 TypeStat 的数据库里读出接收端端口和令牌，写进 `js/config.js`，
-然后把加载项复制到 `%APPDATA%\kingsoft\wps\jsaddons\TypeStat_1.0.0\`，
-并在同级的 `publish.xml` 里登记。
+在 TypeStat 的「**适配器**」页点「装进 WPS」。加载项文件就编在程序里，它会写到
+`%APPDATA%\kingsoft\wps\jsaddons\TypeStat_1.0.0\`，把端口和令牌填进 `js/config.js`，
+并在同级的 `publish.xml` 里登记一条。**没有脚本要跑，也不用装 Node**——
+改这份源码之后必须重新编译 TypeStat，装出来的才是新的（`include_str!` 是编译期读的）。
 
 （目录约定、`publish.xml` 字段、`<名字>_<版本>` 的命名，都取自 WPS 官方脚手架
 `wpsjs` 包的 `src/lib/build.js`，不是猜的。要改这里的机制，先回去核对那个文件。）
+
+手动装，或者装到另一台机器上：同一页的「存出插件文件」会把这份加载项（含本文件）
+和 Obsidian 插件一起存到一个文件夹里，照上面那个目录结构复制过去，
+再把 `js/config.example.js` 复制成 `js/config.js` 并填上端口和令牌。
 
 **装完必须完全退出 WPS 再打开**——加载项只在 WPS 启动时加载一次。
 
@@ -151,7 +152,7 @@ node test/check-undefined.mjs     # 找「被调用但从没定义」的函数
 | **删除计上了、打字全漏** | 只在兜底路上会这样：映射只覆盖了一半（多半是点过「翻转增删映射」）。再打几个字会自动重学 |
 | 字数明显偏大 | 先看「单次最大新增 / 删除（个）」：敲字时它应该是 1。涨到几十上百就是读错了范围。见下 |
 | 「其中计上的事件」涨得跟拼音按键一样快 | 那一行是**事件条数**不是字数（单位现在标出来了）。真正的字数是下面「已上报新增字符数（个）」 |
-| 测试连接报「令牌不对」 | TypeStat 里重新生成过令牌。重跑 `install.mjs` |
+| 测试连接报「令牌不对」 | TypeStat 里重新生成过令牌。在「适配器」页点一次「重新装一次」，再重启 WPS |
 | 测试连接报「连不上」 | TypeStat 没在跑，或端口不是 42180 |
 
 ### 「长度」和「跨度」现在只是证据
@@ -247,12 +248,12 @@ manifest.xml      加载项元信息（名称、API 版本）
 ribbon.xml        功能区定义：一个 TypeStat 选项卡，三个按钮
 index.html        入口页（不显示内容，只挂监听）
 main.js           按顺序引入 config.js → reporter.js → ribbon.js
-js/config.js      端口、令牌、应用名（由 install.mjs 生成）
+js/config.js      端口、令牌、应用名（装加载项时生成，含令牌，不进版本库）
+js/config.example.js  上面那份的模板：既是给人看的样例，也是装加载项时的输入
 js/reporter.js    核心：收事件、算增删、攒批、上报、选主、自动校准
 js/ribbon.js      功能区回调（OnAddinLoad / OnAction）
 ui/status.html    诊断对话框
 ui/status.js      对话框逻辑
-install.mjs       安装脚本
 test/             假 WPS 环境下跑真 reporter.js 的校准测试 + 未定义调用扫描
 ```
 

@@ -25,3 +25,20 @@ export function shortDate(iso: string): string {
   const d = parse(iso);
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
+
+/** 「周三」。 */
+export function weekdayCn(iso: string): string {
+  return `周${WEEKDAYS[parse(iso).getDay()]}`;
+}
+
+/**
+ * 日期导航里那个词：看的是今天就写「今天」，看的是别的日子就写「9/23 周三」。
+ *
+ * **不能一律写「今天」。** 翻到 9 月 23 号还说「今天你坐下来写了」，
+ * 那就是这一页在骗人——而这个项目从头到尾在防的就是这种事。
+ * 各处措辞不同（有的地方要「那一天」而不是「9/23」），所以这里只提供零件，
+ * 由页面自己拼句子。
+ */
+export function dayWord(iso: string, today: string): string {
+  return iso === today ? "今天" : `${shortDate(iso)} ${weekdayCn(iso)}`;
+}

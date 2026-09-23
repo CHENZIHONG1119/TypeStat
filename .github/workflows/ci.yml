@@ -1,0 +1,92 @@
+# 测试 + 打包。
+#
+# 分成两个 job 而不是一个，是因为它们的触发条件不同：`test` 每次提交和 PR 都跑，
+# `release` 只在推 `v*` 标签时跑，而且**排在 `test` 后面**——一个连测试都过不了的
+# 提交不该产出安装包。
+#
+# **两个 job 都必须跑在 Windows 上。** 这个 crate 只在 Windows 上编译
+# （`src/` 里一个 `cfg(not(windows))` 都没有：全局钩子、DPAPI、UIPI 全是 Win32），
+# 换 Linux 连编译都过不去，更别说打包出 `.msi`。
+name: CI
+
+on:
+  push:
+    # 两个都列上，因为**这个仓库当前的分支叫 `master`**，而 GitHub 新建仓库的
+    # 默认分支叫 `main`。只写一个，另一边的提交就会静默地不触发任何东西——
+    # 那种失败没有任何提示，等到要发版时才发现 CI 从来没跑过。
+    # 想统一成 `main` 的话，改分支名的同时把这里删掉一个即可。
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  # 允许在 Actions 页面手动跑一次，方便验证 workflow 本身有没有坏。
+  workflow_dispatch:
+
+# 同一分支上连着推几次时，把还在跑的上一次取消掉——排队等一份已经过时的构建没有意义。
+# 标签发布不适用这条（每个标签只推一次），但仍然受益于分组。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 前端先跑。`npm run build` 里含 `tsc --noEmit`，比 Rust 编译快一个数量级，
+      # 类型错误在这一步就能暴露，不用等十分钟的 cargo 跑完才看见。
+      # Tauri 的 `beforeBuildCommand` 后面还会再跑一次 `npm run build`，
+      # 那一次是打包流程的一部分，不能省。
+      - uses: actions/setup-node@v4
+        with:
+          # 锁文件是 lockfileVersion 3，要 npm 7+；20 是当前的 LTS。
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+      # 冷启动的 Tauri 构建要十分钟上下，缓存掉的正是这十分钟。
+      # `workspaces` 指向 src-tauri——仓库根不是 Rust 工程。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    # tauri-action 要往这个仓库创建 Release，默认的只读令牌不够。
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+
+      # 打哪几种包由 `src-tauri/tauri.conf.json` 的 `bundle.targets` 决定
+      # （msi + nsis），这里不再传 `--bundles`——同一个决定放两处，迟早会不一致。
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: TypeStat ${{ github.ref_name }}
+          releaseBody: |
+            下载下面的安装包，`.msi` 和 `-setup.exe` 装一个即可。
+
+            装完首次运行会申请全局键盘钩子，这是它的工作方式——它不记录你输入的内容，
+            只记录按键次数。详见仓库首页的「隐私」一节。
+          # 草稿。推一个标签就自动对外发布，等于把「要不要发」这件事交给一次手滑；
+          # 草稿会出现在 Releases 里但对外不可见，确认过再点发布。
+          releaseDraft: true
+          prerelease: false

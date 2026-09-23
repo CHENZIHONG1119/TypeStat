@@ -25,7 +25,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::Response,
-    routing::{get, post},
+    routing::post,
     Json, Router,
 };
 use crossbeam_channel::Sender;
@@ -104,7 +104,6 @@ pub fn spawn(tx: Sender<CollectMsg>, token: String) -> Option<u16> {
 
                 let app = Router::new()
                     .route("/report", post(report))
-                    .route("/health", get(health))
                     .layer(middleware::from_fn(cors))
                     .with_state(state);
 
@@ -137,10 +136,18 @@ pub fn last_report_at() -> i64 {
     LAST_REPORT_AT.load(Ordering::Relaxed)
 }
 
-/// 健康检查。插件可以用它确认接收端是否在跑。
-async fn health() -> &'static str {
-    "ok"
-}
+// 这里原本有个 `GET /health`，返回 `"ok"`，给插件确认接收端在不在。删掉了：
+//
+//   1. **没人用它。** WPS 加载项、Obsidian 插件、状态页，三处都只调 `/report`。
+//   2. 它是唯一一个**不发令牌也能拿到 200** 的端点。接收端绑在 127.0.0.1 上，
+//      但 CORS 是 `*`（加载项页面在 `file://` 源上，不放行预检就过不去），
+//      于是任何一个网页都能 `fetch('http://127.0.0.1:42180/health')` 一下——
+//      拿得到响应就说明这台机器上装了这个程序。端口扫描本身躲不掉，
+//      但没必要再白送一个能确认身份的端点。
+//
+// 要确认通路，用本来就有的那条：`POST /report` 带 `{"input":0,"delete":0}`，
+// 令牌对就回 200、不落库、也不刷新 last_report_at（见下面的 `report`）。
+// 它同样验令牌，所以答案的可信度还更高。
 
 /// 放行跨源请求。
 ///
@@ -160,7 +167,7 @@ async fn cors(req: Request<Body>, next: Next) -> Response {
         h.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
         h.insert(
             ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("POST, GET, OPTIONS"),
+            HeaderValue::from_static("POST, OPTIONS"),
         );
         h.insert(
             ACCESS_CONTROL_ALLOW_HEADERS,
@@ -264,13 +271,22 @@ pub fn current_token() -> Option<String> {
     TOKEN.get().map(|l| l.read().clone())
 }
 
-/// 重新生成 token，立即生效。用于用户怀疑 token 外泄时。
-/// 返回新 token；接收端从未启动过时返回 `None`。
-pub fn rotate_token() -> Option<String> {
-    let lock = TOKEN.get()?;
-    let fresh = random_token();
-    *lock.write() = fresh.clone();
-    Some(fresh)
+/// 把内存里的 token 换成指定的一个，立即生效。
+///
+/// **调用方必须先把它落库，再调这里。** 反过来的话，落库一旦失败，内存里是新值
+/// 而 `settings` 表里是旧值——界面显示的和插件实际要用的就对不上，
+/// 而且重启之后还会「自己好了」。完整的理由见
+/// `commands::rotate_adapter_token`。
+///
+/// 返回是否真的换上了：接收端从未启动过时返回 `false`（没有地方可写）。
+pub fn set_token(t: String) -> bool {
+    match TOKEN.get() {
+        Some(lock) => {
+            *lock.write() = t;
+            true
+        }
+        None => false,
+    }
 }
 
 /// 生成随机 token。不需要密码学强度，但必须不可预测，

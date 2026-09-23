@@ -6,6 +6,7 @@
 //! 出错概率远低于 hwnd。
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, FALSE};
 use windows::Win32::System::Threading::{
@@ -15,8 +16,21 @@ use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 const MAX_CACHE_ENTRIES: usize = 256;
 
+/// 缓存条目的存活时间。超过就重新解析一次。
+///
+/// **没有 TTL 的 pid 缓存是错的**，而这个模块开头从第一天起就写着「配合短 TTL」——
+/// 只是没实现，只有容量上限。pid 会被系统回收复用：某个进程退出后它的 pid 分给了
+/// 另一个程序，而缓存里那条映射永不失效，于是新程序里敲的每一个键都记到
+/// **旧应用名下**。它不报错、数字看着也合理，只是张冠李戴——
+/// 正是这个程序最不肯放过的那种错。
+///
+/// 5 分钟是个折中：解析一次要开进程句柄，而前台应用一换就要解析一次，
+/// 缓存本身是必要的；另一方面用户不会对「5 分钟前的应用名」有异议。
+const ENTRY_TTL: Duration = Duration::from_secs(300);
+
 pub struct AppResolver {
-    cache: HashMap<u32, String>,
+    /// pid → （进程名，记下来的时刻）。
+    cache: HashMap<u32, (String, Instant)>,
 }
 
 impl Default for AppResolver {
@@ -40,8 +54,12 @@ impl AppResolver {
             None => return "unknown".to_string(),
         };
 
-        if let Some(name) = self.cache.get(&pid) {
-            return name.clone();
+        let now = Instant::now();
+        if let Some((name, at)) = self.cache.get(&pid) {
+            // 过期就当作没有，往下走去重新解析并覆盖。见 `ENTRY_TTL`。
+            if now.duration_since(*at) < ENTRY_TTL {
+                return name.clone();
+            }
         }
 
         let name = process_name(pid).unwrap_or_else(|| "unknown".to_string());
@@ -50,7 +68,7 @@ impl AppResolver {
         if self.cache.len() >= MAX_CACHE_ENTRIES {
             self.cache.clear();
         }
-        self.cache.insert(pid, name.clone());
+        self.cache.insert(pid, (name.clone(), now));
         name
     }
 }

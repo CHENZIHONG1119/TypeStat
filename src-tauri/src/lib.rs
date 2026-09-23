@@ -4,18 +4,26 @@
 //! 两者通过有界队列解耦。钩子回调只做入队，绝不做任何 IO。
 
 pub mod adapters;
+pub mod autostart;
 pub mod collector;
 pub mod commands;
 pub mod db;
+pub mod export;
 pub mod hook;
 pub mod msg;
 pub mod report;
+pub mod tray;
 
 use tauri::{Emitter, Manager};
 
 use collector::QUEUE_CAPACITY;
 
-pub fn run() {
+/// 带返回值：启动失败时要能让调用方（`main.rs`）把原因说出来。
+///
+/// 这件事在这里不是风格问题。`release` 是 `panic = "abort"` + 窗口子系统，
+/// 一旦 setup 里出错又没人接住，进程当场消失，**用户双击图标什么都不会发生**，
+/// 连一句「为什么」都没有。把错误交回去，才有地方弹那个对话框。
+pub fn run() -> Result<(), String> {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
@@ -26,6 +34,7 @@ pub fn run() {
             let read_conn = db::open(&db_path)?;
 
             let (tx, rx) = crossbeam_channel::bounded(QUEUE_CAPACITY);
+            // 托盘菜单的「退出」要拿它冲一次库，所以留一份在手里。
             // 容量 1：UI 只需要知道"有新数据了"，不需要知道有几次。
             let (dirty_tx, dirty_rx) = crossbeam_channel::bounded(1);
 
@@ -44,7 +53,8 @@ pub fn run() {
                     t
                 }
             };
-            let ipc_port = match adapters::ipc::spawn(tx, token.clone()) {
+            // 留一份 tx 给托盘里的「退出」用（退出前要冲一次库）。
+            let ipc_port = match adapters::ipc::spawn(tx.clone(), token.clone()) {
                 Some(p) => {
                     db::set_setting(&read_conn, "adapter_port", &p.to_string())?;
                     Some(p)
@@ -75,6 +85,22 @@ pub fn run() {
                 db_path,
             });
 
+            // 托盘。放在最后：它要读 `pause` 的当前状态、要拿 `tx`，
+            // 而且它建的窗口事件钩子引用的是已经建好的主窗口。
+            let t = tray::spawn(app.handle(), tx)?;
+            app.manage(t);
+
+            // 窗口是 `visible: false` 建的（见 tauri.conf.json），这里决定要不要露面。
+            //
+            // **任何一条提前返回的路径都会让窗口永远不出现**，所以这一句必须放在
+            // 所有可能失败的步骤之后；而 `main.rs` 会在 setup 出错时弹对话框兜底，
+            // 不让用户面对「双击了没反应」。
+            //
+            // 开机自启带 `--minimized`：那时只留托盘图标，不弹窗口盖住桌面。
+            if !autostart::start_minimized() {
+                tray::show_main(app.handle());
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -97,7 +123,17 @@ pub fn run() {
             commands::report_catchup,
             commands::report_settings,
             commands::report_save_settings,
+            commands::export_data,
+            commands::open_export_dir,
+            commands::wps_addon_status,
+            commands::install_wps_addon,
+            commands::export_adapter_files,
+            commands::open_wps_addon_dir,
+            commands::pause_status,
+            commands::set_paused,
+            commands::autostart_status,
+            commands::set_autostart,
         ])
         .run(tauri::generate_context!())
-        .expect("TypeStat 启动失败");
+        .map_err(|e| format!("{e}"))
 }

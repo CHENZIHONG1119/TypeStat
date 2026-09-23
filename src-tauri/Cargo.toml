@@ -71,6 +71,8 @@ windows = { version = "0.58", features = [
     # 报告功能的接口密钥用 DPAPI 加密后存（CryptProtectData / CryptUnprotectData）。
     # 不用 CRYPTPROTECT_LOCAL_MACHINE，所以别的 Windows 账户解不开。
     "Win32_Security_Cryptography",
+    # 开机自启读写 HKCU 的 Run 键。理由见 `src/autostart.rs` 的模块头。
+    "Win32_System_Registry",
 ] }
 
 [profile.release]

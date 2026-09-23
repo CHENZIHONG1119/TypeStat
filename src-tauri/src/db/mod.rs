@@ -214,6 +214,15 @@ pub fn summary_for_day(conn: &Connection, day: &str) -> SqlResult<Summary> {
     summary_for_range(conn, day, day)
 }
 
+/// 库里最早有记录的那一天。`None` 表示一分钟的记录都没有。
+///
+/// 导出「全部」时用它当起点：让用户自己去想「我第一天用是什么时候」是荒唐的，
+/// 而拿一个固定日期（比如 1970）当起点会让区间看着像份假数据。
+pub fn first_day(conn: &Connection) -> SqlResult<Option<String>> {
+    // `MIN()` 在空表上返回 NULL，所以取的是 `Option<String>`。
+    conn.query_row("SELECT MIN(local_day) FROM minute_stats", [], |r| r.get(0))
+}
+
 /// 一天内每小时的汇总，用于小时柱状图 / 热力图。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

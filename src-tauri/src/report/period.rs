@@ -143,6 +143,31 @@ pub fn of_date(period_type: PeriodType, date: NaiveDate) -> Period {
     }
 }
 
+/// 期次键里年份的合法范围。
+///
+/// **这道闸门是防 panic 的，不是防呆的。** `parse` 是唯一一处拿不受信任的字符串
+/// 造日期的地方，而 `of_date` 里的日期算术用的是 `expect` 和 `Add`：
+/// 只要进来的年份贴着 chrono 的上界，`shift_months(start, +1)`（月末那一步）
+/// 就会被推到上界之外，`from_ymd_opt` 返回 `None`，接着 `.expect` 当场 panic。
+///
+/// **具体是哪个年份，会跟着 chrono 的版本变。** 写这条注释时锁的是 0.4.45，
+/// 它的上界是 262142-12-31（`NaiveDate::MAX`）——所以现在出事的是 `"262142-12"`。
+/// 更早的 0.4.x 上界是 262143，那时出事的是 `"262143-12"`。
+/// **这正是不能用「贴着上界留一点余量」写法的原因**：那个数会变，
+/// 而每变一次，余量就可能从「够」变成「不够」。9999 离两个上界都远得离谱。
+///
+/// 后果比一般 panic 重得多：这个 crate 的 release profile 是 `panic = "abort"`，
+/// `main.rs` 又是 `windows_subsystem = "windows"`——用户机器上**没有控制台、
+/// 没有任何提示**，进程直接消失，钩子、采集、看门狗三条线程一起死，
+/// 打字统计从此刻起静默停摆，而界面上下一次重开才会发现。
+/// 一个字符串参数能导致这个后果，闸门就必须卡在这里。
+///
+/// 上限取 9999 而不是贴着 chrono 的上界：留出余量让月末那一步
+/// （`shift_months(start, +1)`，还有周键的 `+6 天`）永远够得着边界之外。
+/// 下限取 Unix 纪元——这个程序不可能有比它更早的数据。
+const MIN_YEAR: i32 = 1970;
+const MAX_YEAR: i32 = 9999;
+
 /// 把期次键解回一期。只认自己写出去的那种写法。
 ///
 /// 解完再走一遍 `of_date` 核一次键是否原样回来。这一道不是多余：`2026-W1`
@@ -151,16 +176,30 @@ pub fn of_date(period_type: PeriodType, date: NaiveDate) -> Period {
 /// 否则前端传 `2026-W1` 进来会生成一份键为 `2026-W01` 的报告，
 /// 而它和用户在期条上点的那一格并不是同一个东西。
 pub fn parse(period_type: PeriodType, key: &str) -> Option<Period> {
-    let date = match period_type {
+    let (year, date) = match period_type {
         PeriodType::Week => {
             let (y, w) = key.split_once("-W")?;
-            NaiveDate::from_isoywd_opt(y.parse().ok()?, w.parse().ok()?, Weekday::Mon)?
+            let year = y.parse().ok()?;
+            (year, NaiveDate::from_isoywd_opt(year, w.parse().ok()?, Weekday::Mon)?)
         }
         PeriodType::Month => {
             let (y, m) = key.split_once('-')?;
-            NaiveDate::from_ymd_opt(y.parse().ok()?, m.parse().ok()?, 1)?
+            let year = y.parse().ok()?;
+            (year, NaiveDate::from_ymd_opt(year, m.parse().ok()?, 1)?)
         }
     };
+
+    // **必须在 `of_date` 之前。** 上面那两行只保证「日期本身拼得出来」，
+    // 不保证「拿它做日期算术不越界」——`from_ymd_opt(262142, 12, 1)` 是成功的，
+    // 出事的是下一步的月末。见 `MIN_YEAR` 的注释。
+    //
+    // 比的是**键里写的那个年份**，不是解出来的日期所在年：ISO 周的归属年
+    // 和它周一的自然年可以差一年（2026-W01 的周一是 2025-12-29），
+    // 而键里写的就是归属年。
+    if !(MIN_YEAR..=MAX_YEAR).contains(&year) {
+        return None;
+    }
+
     let p = of_date(period_type, date);
     (p.key == key).then_some(p)
 }
@@ -296,6 +335,80 @@ mod tests {
         assert_eq!(parse(PeriodType::Month, "2026-09").unwrap().starts_on, "2026-09-01");
         // 类型也要对上：周键不能从月那条路解出来。
         assert!(parse(PeriodType::Month, "2026-W39").is_none());
+    }
+
+    /// 极端年份的键要被拒绝，**不能让它走到日期算术里去**。
+    ///
+    /// 贴着 chrono 上界的年份能过格式校验（`from_ymd_opt` / `from_isoywd_opt`
+    /// 都会成功），但紧接着的月末（或周末）运算会把它推到上界之外，越界 panic。
+    /// release 是 `panic = "abort"` 加窗口子系统：进程**无声消失**，
+    /// 而且是从那一刻起不再记录。
+    ///
+    /// **那条上界是哪一年，跟着 chrono 的版本变**——0.4.45 是 262142，
+    /// 更早的 0.4.x 是 262143。所以这条测试不写死年份，而是从 `NaiveDate::MAX`
+    /// 现取：写死的话，上游每动一次界，测试要么无端挂掉，要么悄悄失去意义。
+    /// 现在的形状是**先证明危险真的存在**（下面两条前提），再断言闸门挡住了它；
+    /// 哪天上游收紧了范围、危险自己消失了，前提会先挂——那时闸门可以撤，
+    /// 但得有人知道是自己撤的，而不是被上游悄悄改掉的。
+    ///
+    /// 这条测试盯的就是那个字符串。原来的用例只覆盖了格式非法的那一批，
+    /// 「量级」这一维是空的，所以它能过。
+    #[test]
+    fn 极端年份的期次键被拒绝而不是崩掉() {
+        let top = NaiveDate::MAX.year();
+
+        // 前提一：上界年的 12 月 1 号拼得出来 → 这个键确实能一路走到日期算术，
+        // 闸门不是「反正也拼不出来」的摆设。
+        assert!(
+            NaiveDate::from_ymd_opt(top, 12, 1).is_some(),
+            "chrono 的上界年 {top} 连 12 月 1 号都拼不出来，这条用例的前提不成立了"
+        );
+        // 前提二：上界年再往后一个月就出界 → 月末那一步
+        // （`of_date` 月分支里的 `shift_months(start, +1)`）真的会越界。
+        // 这两条合起来才是「危险存在」的完整证据。
+        assert!(
+            NaiveDate::from_ymd_opt(top + 1, 1, 1).is_none(),
+            "chrono 的上界年 +1 居然拼得出来，月末那一步不会越界了，重新评估这道闸门"
+        );
+
+        for bad in [
+            // 现取的上界年，以及历史上曾经是上界的那两个——闸门都该拦。
+            format!("{top}-W01"),
+            "262143-W53".to_string(),
+            "262143-W01".to_string(),
+            "10000-W01".to_string(),
+            "1969-W01".to_string(),
+            "0000-W01".to_string(),
+        ] {
+            assert!(
+                parse(PeriodType::Week, &bad).is_none(),
+                "周键 {bad:?} 被放行了"
+            );
+        }
+        for bad in [
+            format!("{top}-12"),
+            "262143-12".to_string(),
+            "10000-01".to_string(),
+            "1969-12".to_string(),
+            "0000-01".to_string(),
+        ] {
+            assert!(
+                parse(PeriodType::Month, &bad).is_none(),
+                "月键 {bad:?} 被放行了"
+            );
+        }
+
+        // 边界内的一格都不能误伤——闸门卡的是年份，不是「看着很大」。
+        // 同时钉住「闸门内的年份 chrono 确实还认」：否则闸门卡的就是库的范围，
+        // 而不是产品的判断，收得再紧也测不出东西来。
+        assert!(
+            NaiveDate::from_ymd_opt(MAX_YEAR, 12, 31).is_some(),
+            "闸门内最大的那一格 chrono 已经不接受了，闸门的上界该往下挪了"
+        );
+        assert!(parse(PeriodType::Month, "1970-01").is_some());
+        assert!(parse(PeriodType::Month, "9999-12").is_some());
+        assert!(parse(PeriodType::Week, "1970-W01").is_some());
+        assert!(parse(PeriodType::Week, "9999-W01").is_some());
     }
 
     /// 最近几期从旧到新排，最后一项是当前期，且只有它还没结束。

@@ -66,7 +66,7 @@ fn hexval(c: char) -> Option<u32> {
 }
 
 fn from_hex(s: &str) -> Option<Vec<u8>> {
-    if s.is_empty() || s.len() % 2 != 0 {
+    if s.is_empty() || !s.len().is_multiple_of(2) {
         return None;
     }
     let bytes = s.as_bytes();

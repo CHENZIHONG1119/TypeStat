@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "../lib/api";
+import { dayWord, shortDate } from "../lib/dates";
 import { useTokens } from "../lib/useTheme";
 import { KeyboardHeatmap } from "../components/KeyboardHeatmap";
 
@@ -9,10 +10,12 @@ import { KeyboardHeatmap } from "../components/KeyboardHeatmap";
  */
 export function Keys({
   day,
+  today,
   revision,
   days,
 }: {
   day: string;
+  today: string;
   revision: number;
   days: number;
 }) {
@@ -20,7 +23,10 @@ export function Keys({
   const [rows, setRows] = useState<api.KeyUsage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 区间含今天，所以要往前推 days-1 天，否则「近 7 天」会变成 8 天。
+  const isToday = day === today;
+  const when = dayWord(day, today);
+
+  // 区间含最后一天，所以要往前推 days-1 天，否则「近 7 天」会变成 8 天。
   const from = days === 1 ? day : api.shiftDay(day, -(days - 1));
 
   useEffect(() => {
@@ -44,7 +50,9 @@ export function Keys({
 
   return (
     <section className="page">
-      <p className="eyebrow">键位 · {days === 1 ? "今天" : `近 ${days} 天`}</p>
+      <p className="eyebrow">
+        键位 · {days === 1 ? when : `近 ${days} 天`}
+      </p>
       <h2 className="sec">你按的是哪些键</h2>
       <p className="sub">
         60% 布局 · 颜色按次数取平方根缩放，否则高低差两个数量级会糊成一片
@@ -80,7 +88,12 @@ export function Keys({
               （会写明是哪个键），<b>不会静默丢掉</b>。
             </li>
             <li>
-              数据按天汇总存储，所以「今日」是从今天零点到现在，昨天以前不会混进来。
+              数据按天汇总存储，所以这一页的日期都是<b>自然日</b>，不是「最近 24 小时」：
+              {days === 1
+                ? isToday
+                  ? "看今天就是从零点到现在。"
+                  : `这里指的是 ${when} 一整天。`
+                : `近 ${days} 天就是从 ${shortDate(from)} 到 ${shortDate(day)} 这几个自然日。`}
               本页 <b>不跟顶栏的口径开关走</b>——这里数的是按键，没有「字」这个概念。
             </li>
           </ul>

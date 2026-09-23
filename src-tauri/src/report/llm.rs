@@ -286,7 +286,7 @@ pub async fn write(cfg: &Config, facts: &ReportFacts) -> Written {
         Err(_) => return fallback(facts, "无法连接"),
     };
 
-    let resp = match client
+    let mut resp = match client
         .post(&url)
         .bearer_auth(&key)
         .json(&payload(&model, &sheet))
@@ -302,17 +302,37 @@ pub async fn write(cfg: &Config, facts: &ReportFacts) -> Written {
         // 原样回显，那里面就有 Authorization），而这句话是要落库上屏的。
         return fallback(facts, &status_reason(resp.status().as_u16()));
     }
-    // 读之前先看一眼长度。分块传输时这里会是 None，读完再核一次字节数。
+    // 对面老实报了长度时先一眼挡掉，省得白读。
     if resp.content_length().is_some_and(|len| len > MAX_BODY) {
         return fallback(facts, "响应过长（超过 64 KB）");
     }
-    let body = match resp.text().await {
-        Ok(t) => t,
-        Err(e) => return fallback(facts, classify(&e)),
-    };
-    if body.len() as u64 > MAX_BODY {
-        return fallback(facts, "响应过长（超过 64 KB）");
+
+    // 但**不能只靠它**：分块传输（`Transfer-Encoding: chunked`）时
+    // `content_length()` 是 None，而 `base_url` 是用户手填的——填成一个会一直吐、
+    // 又恰好不回长度的地址（打错的网关、内网某个下载端点），一次 `text()`
+    // 就会把它吐的东西全缓冲在内存里，直到 30 秒超时为止。按百兆带宽算那也是
+    // 几个 G，进程直接被 OOM 杀掉——release 是 `panic = "abort"`，没有 unwinding，
+    // 没有提示，用户看到的是程序突然消失。
+    //
+    // 所以边读边数，超了立刻返回：提前 return 时 `resp` 被 drop，连接随之断开，
+    // 对面不会再往下吐。这样上限才真的存在，而不是「在对面配合时才存在」。
+    let mut raw = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if raw.len() as u64 + chunk.len() as u64 > MAX_BODY {
+                    return fallback(facts, "响应过长（超过 64 KB）");
+                }
+                raw.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => return fallback(facts, classify(&e)),
+        }
     }
+
+    // 非法字节按替换字符处理，而不是整份丢掉：JSON 里一个坏字节不该被读成
+    // 「响应不是合法的 JSON」——那会把「对面编码不对」说成「对面回的不是 JSON」。
+    let body = String::from_utf8_lossy(&raw).into_owned();
 
     let value: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,

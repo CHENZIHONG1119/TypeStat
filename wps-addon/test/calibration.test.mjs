@@ -56,7 +56,7 @@ function boot(seed) {
       this.setRequestHeader = () => {};
       this.send = () => { this.status = 200; if (this.onload) this.onload(); };
     },
-    // 真机上由 js/config.js 定义（install.mjs 生成）。沙箱里给个等价的。
+    // 真机上由 js/config.js 定义（TypeStat 装加载项时生成）。沙箱里给个等价的。
     TYPESTAT_CONFIG: { app: 'wps.exe', port: 42180, token: 'test-token' },
     setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0,
     Date: FakeDate, JSON, Math, String, Number, Array, Object, parseInt, parseFloat, isNaN, console,

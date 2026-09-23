@@ -253,7 +253,7 @@ pub fn facts_for_period(conn: &Connection, p: &period::Period) -> Result<ReportF
     let mut hours = Vec::with_capacity(hourly.len());
     let mut busiest: Option<(i64, i64)> = None;
     for h in &hourly {
-        if h.key_input > 0 && busiest.map_or(true, |(_, k)| h.key_input > k) {
+        if h.key_input > 0 && busiest.is_none_or(|(_, k)| h.key_input > k) {
             busiest = Some((h.hour, h.key_input));
         }
         hours.push(HourFacts {

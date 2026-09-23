@@ -565,7 +565,9 @@ function test() {
       msg.textContent = '通。接收端在线，令牌有效。（空上报不会写进统计）';
     } else if (xhr.status === 401) {
       msg.className = 'err';
-      msg.textContent = '令牌不对。在 TypeStat 设置页重新生成过就要重跑 wps-addon/install.mjs。';
+      msg.textContent =
+        '令牌不对。TypeStat「适配器」页重新生成过令牌的话，' +
+        '在那里点一下「重新装一次」，再重启 WPS。';
     } else if (xhr.status === 400) {
       msg.className = 'err';
       msg.textContent = '数据被拒（HTTP 400）。检查 js/config.js 里的 app 名是不是合法。';

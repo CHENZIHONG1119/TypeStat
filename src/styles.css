@@ -192,6 +192,38 @@ body {
   margin-right: 8px;
 }
 
+/* 第一次把窗口收进托盘时出现的一条说明。占的是 .rangebar 那个位置、
+   用的是同一个调子，但它不是控件——它只说一次，之后不再出现。 */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 40px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.banner .lbl {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  flex: none;
+}
+
+.banner .txt {
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink2);
+  flex: 1;
+  min-width: 260px;
+}
+
+.banner .txt b {
+  color: var(--ink);
+}
+
 /* 正文：单栏、居中、窄。窄是故意的——一行太长的数字没人读得下去。 */
 .page {
   max-width: 820px;
@@ -719,6 +751,12 @@ table.data tr.total td {
   background: var(--critical);
 }
 
+/* 暂停不是故障，是用户自己拨的开关，但它必须显眼——所以用 warning 而不是
+   critical。红色的意思是「坏了」，而这里一切正常，只是没在记录。 */
+.dot-warn {
+  background: var(--warning);
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -776,6 +814,37 @@ input[type="text"]:focus,
 input[type="password"]:focus {
   outline: none;
   border-color: var(--series-1);
+}
+
+/* 日期框跟上面同一根线、同一个圆角，但**宽度是内容宽**：
+   它长在一条横向的栏里，撑满会把旁边那两段挤走。
+   `color-scheme` 已经写在这里了，所以暗色下浏览器画的那套图标和日历也是暗的。 */
+input[type="date"] {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 4px 9px;
+  width: auto;
+}
+
+input[type="date"]:focus {
+  outline: none;
+  border-color: var(--series-1);
+}
+
+/* 「2026 年 9 月 23 日 · 星期三」——日期框右边那句人话。
+   翻到过去的日子时，这一句是唯一能一眼确认「我在看哪一天」的地方。 */
+.dayword {
+  font-size: 12.5px;
+  color: var(--ink2);
+}
+
+.daypick {
+  flex: none;
 }
 
 /* 密钥用等宽：粘贴时一眼看得出有没有多带一个空格。 */

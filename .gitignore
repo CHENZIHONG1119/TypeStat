@@ -15,7 +15,7 @@ node_modules/
 /src-tauri/gen/schemas/
 
 # ── 本地生成、含真实凭据，绝不能提交 ─────────────────────────────────
-# 由 `node wps-addon/install.mjs` 从 TypeStat 数据库里读出端口和令牌后写入。
+# 由 TypeStat 自己写出来（「适配器」页的「装进 WPS」），里面是真的端口和令牌。
 # 它对每个使用者都是不同的（令牌是各自机器上随机生成的），
 # 提交上去既泄露了提交者的令牌，也会让别人的加载项连不上。
 # 需要的话照 wps-addon/js/config.example.js 抄一份。

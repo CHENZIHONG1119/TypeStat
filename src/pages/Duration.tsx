@@ -20,10 +20,12 @@ const SESSION_GAP_MINUTES = 5;
  */
 export function Duration({
   day,
+  today,
   revision,
   days,
 }: {
   day: string;
+  today: string;
   revision: number;
   days: number;
 }) {
@@ -32,8 +34,19 @@ export function Duration({
   const from = api.shiftDay(day, -(days - 1));
 
   useEffect(() => {
+    // `alive` 那道闸门见 `Keys.tsx`：区间变化时新旧两个请求在飞，
+    // 先发的可能后回来，把图换成上一个区间的数据。慢的那次越慢越容易发生。
+    let alive = true;
     setSeries(null);
-    api.daily(from, day).then(setSeries).catch(console.error);
+    api
+      .daily(from, day)
+      .then((r) => {
+        if (alive) setSeries(r);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
   }, [from, day, revision]);
 
   const points = useMemo<PlotPoint[]>(
@@ -48,8 +61,17 @@ export function Duration({
   if (!series) return <div className="empty">正在加载…</div>;
 
   const hasTime = series.some((d) => d.sessionMinutes > 0);
-  // 最后一天是今天，天数不满一天，混进平均里会把日均拉低一截。
-  const full = series.filter((d) => d.day !== day && d.sessionMinutes > 0);
+  /**
+   * 区间最后那一格要不要排除掉。
+   *
+   * **只有它真的是今天时才排除**：今天天数不满一天，混进平均里会把日均拉低一截。
+   * 翻到过去的日子时那一格也是完整的一天，**必须一起算进均值**——
+   * 否则看 9/23 时会把 9/23 整天平白排除在外，除数少一天，均值凭空变高。
+   */
+  const partial = day === today;
+  const full = series.filter(
+    (d) => (!partial || d.day !== day) && d.sessionMinutes > 0,
+  );
   const avgS = full.length ? Math.round(full.reduce((s, d) => s + d.sessionMinutes, 0) / full.length) : 0;
   const avgA = full.length ? Math.round(full.reduce((s, d) => s + d.activeMinutes, 0) / full.length) : 0;
   // 注意「最长的一段」只有今天算得出来（TodaySummary 里才有 longestMinutes）；
@@ -65,10 +87,6 @@ export function Duration({
   );
   const totalS = series.reduce((s, d) => s + d.sessionMinutes, 0);
   const totalA = series.reduce((s, d) => s + d.activeMinutes, 0);
-
-  // 天数按实际返回的行数算，不按请求的天数——库里可能还没有那么早的数据，
-  // 用请求天数当分母会把日均算小，而那看起来完全正常。
-  const spanDays = series.filter((d) => d.sessionMinutes > 0).length || series.length;
 
   return (
     <section className="page">
@@ -115,17 +133,38 @@ export function Duration({
           <div className="ledger">
             <div>
               <div className="k">日均坐下</div>
+              {/* 一个完整的日子都没有时印「—」，**不印 0**：那是「算不出来」，
+                  不是「平均每天坐 0 分钟」——这条线上每一格都在守同一件事。 */}
               <div className="v">
-                {num(avgS)}
-                <small> 分</small>
+                {full.length === 0 ? (
+                  "—"
+                ) : (
+                  <>
+                    {num(avgS)}
+                    <small> 分</small>
+                  </>
+                )}
               </div>
-              <div className="n">按有数据的 {spanDays} 天算，不含今天（今天还没过完）</div>
+              {/* 分母必须印成 `full.length`——那才是上面那个数真正除的天数。
+                  原来印的是「有数据的天数」但含今天，而 `full` 把今天排掉了，
+                  于是说明里的天数比实际除的数大 1（今天真的有数据时）。 */}
+              <div className="n">
+                {full.length === 0
+                  ? `这 ${days} 天里只有今天有数据，算不出日均`
+                  : `按有数据的 ${full.length} 天算${partial ? "，不含今天（今天还没过完）" : ""}`}
+              </div>
             </div>
             <div>
               <div className="k">日均真敲</div>
               <div className="v">
-                {num(avgA)}
-                <small> 分</small>
+                {full.length === 0 ? (
+                  "—"
+                ) : (
+                  <>
+                    {num(avgA)}
+                    <small> 分</small>
+                  </>
+                )}
               </div>
               <div className="n">有按键的分钟数，一分钟内敲一下也算一分钟</div>
             </div>

@@ -72,9 +72,27 @@ export interface AppPoint {
   charSource: string | null;
 }
 
+/**
+ * 看门狗此刻看到的输入时刻（毫秒，系统启动起算）。
+ *
+ * 界面暂时不显示它——打开设置页本身就要用键鼠，那个瞬间滞后必然接近 0，
+ * 一个恒为 0 的读数比没有读数更误导。它是给排查用的：钩子被系统摘掉时
+ * 没有任何通知，只有把「系统看见了、却没交给我们多久」直接读出来，
+ * 才能把「用户没在打字」和「钩子已经死了」分开。
+ */
+export interface HookHealth {
+  /** 系统的最后输入时刻；量不到时为 null。 */
+  systemLastMs: number | null;
+  keyboardLastMs: number;
+  mouseLastMs: number;
+  /** `systemLastMs − max(keyboardLastMs, mouseLastMs)`，超过 30 秒判定钩子失效。 */
+  lagMs: number | null;
+}
+
 export interface HookStatus {
   alive: boolean;
   eventCount: number;
+  health: HookHealth;
 }
 
 /** 本地日期以进程所在时区为准，前端不自己算。 */
@@ -142,6 +160,72 @@ export interface AdapterStatus {
 export const adapterStatus = () => invoke<AdapterStatus>("adapter_status");
 
 export const rotateAdapterToken = () => invoke<string>("rotate_adapter_token");
+
+/**
+ * WPS 加载项装到哪儿了、还缺什么。**只读**，问它不会改动机器上的任何东西。
+ *
+ * `installed` 和 `files_missing` 要分开看：前者是那个目录在不在，后者是个别文件
+ * 缺没缺（上一版装过、这一版多了个文件，就是「目录在、文件不全」）。合成一个
+ * 布尔量的话，这两种情况的下一步动作不一样，而界面只能说出一句话。
+ */
+export interface AddonStatus {
+  installed: boolean;
+  /** 加载项目录的完整路径。拿不到 `%APPDATA%` 时是空串。 */
+  dir: string;
+  /** 装着的那份里的令牌和现在这个不一样（换过令牌之后没重装）。 */
+  tokenStale: boolean;
+  /** 缺哪些文件，路径是相对加载项目录的。 */
+  filesMissing: string[];
+  /** 查不了的原因（比如拿不到 `%APPDATA%`）。**和「缺文件」不是一件事。** */
+  note: string | null;
+}
+
+export const wpsAddonStatus = () => invoke<AddonStatus>("wps_addon_status");
+
+/** 装完之后的话：装到哪儿了、publish.xml 是新建还是追加、几个文件。 */
+export interface InstallResult {
+  /** 加载项目录。 */
+  dir: string;
+  /** 写好的配置文件（含令牌）。 */
+  configPath: string;
+  publishPath: string;
+  /** 「新建」/「追加」/「更新已有条目」——WPS 的配置文件被动过了，要说出来。 */
+  publishAction: string;
+  files: number;
+  /** 实际填进配置的端口。 */
+  port: number;
+  /** 接收端当时没起来（端口全被占），装完也连不上。 */
+  receiverDown: boolean;
+}
+
+/**
+ * 把加载项装进 WPS 的加载项目录。
+ *
+ * **端口和令牌不收参数**：后端从自己的 `AppState` 里拿，那本来就是它启动时定的。
+ * 让前端传的话，界面就得先知道令牌才能装，而这一页正是用来「不知道令牌时照做」的。
+ */
+export const installWpsAddon = () =>
+  invoke<InstallResult>("install_wps_addon");
+
+/** 存出去的两份插件文件落在哪儿。 */
+export interface AddonFiles {
+  /** 那个文件夹的完整路径。里面是 `wps-addon\` 和 `obsidian-plugin\` 两份。 */
+  dir: string;
+  /** 写出来的每一个文件的完整路径。界面只说个数，但要数得清。 */
+  files: string[];
+}
+
+/**
+ * 把两份插件的文件存到一个文件夹里，给人手动装（或者拿去别的机器）。
+ *
+ * 存出去的 `config.js` **不含真令牌**——它和仓库里那份一样是模板。
+ * 手动装的人要从这一页自己抄过去。
+ */
+export const exportAdapterFiles = () =>
+  invoke<AddonFiles>("export_adapter_files");
+
+/** 在资源管理器里打开加载项目录。路径由后端算，前端给不了。 */
+export const openWpsAddonDir = () => invoke<string>("open_wps_addon_dir");
 
 /** 采集线程每次落库后触发，前端据此刷新。 */
 export const onStatsUpdated = (cb: () => void) =>
@@ -290,6 +374,85 @@ export const reportSaveSettings = (
   model: string,
   apiKey: string | null,
 ) => invoke<void>("report_save_settings", { baseUrl, model, apiKey });
+
+// ——————————————————————————————————————————————————————————————
+// 数据导出
+// ——————————————————————————————————————————————————————————————
+
+/** 一次导出的结果。**文件位置必须回到界面**，否则用户点了按钮只看到一片安静。 */
+export interface ExportResult {
+  path: string;
+  /** 文件所在目录。那个「打开文件夹」按它走。 */
+  dir: string;
+  /** CSV 是数据行数；JSON 是「天 + 小时 + 应用」三段的行数之和。 */
+  rows: number;
+  bytes: number;
+  from: string;
+  to: string;
+}
+
+/**
+ * 把一段区间导成文件，返回它落在哪儿。
+ *
+ * `from` / `to` 传 `null` 表示「库里最早的一天」/「今天」——这两个默认值由
+ * 后端算，前端不猜：日期以进程所在时区为准，那是后端的知识。
+ */
+export const exportData = (
+  format: "csv" | "json",
+  from: string | null,
+  to: string | null,
+) => invoke<ExportResult>("export_data", { format, from, to });
+
+/** 在资源管理器里打开导出目录。目录由后端算，前端给不了路径。 */
+export const openExportDir = () => invoke<string>("open_export_dir");
+
+// ——————————————————————————————————————————————————————————————
+// 托盘 / 暂停 / 开机自启
+// ——————————————————————————————————————————————————————————————
+
+/**
+ * 现在是不是暂停记录。
+ *
+ * **这个状态不在前端。** 托盘菜单拨的是同一个开关，所以真相只有一份，
+ * 存在 Rust 侧的原子量里；前端读它、改它，但**不自己维护一份**——
+ * 存两份的话，用托盘暂停、界面上的开关还亮着「正在记录」。
+ */
+export const pauseStatus = () => invoke<boolean>("pause_status");
+
+/** 拨暂停开关，返回拨完之后的状态。 */
+export const setPaused = (paused: boolean) =>
+  invoke<boolean>("set_paused", { paused });
+
+/** 开机自启的状态。注意 `stale`：注册表里可能指的是一个已经不在那儿的路径。 */
+export interface Autostart {
+  enabled: boolean;
+  /** 注册表里记的路径。`null` 表示没有这一项。 */
+  path: string | null;
+  /** 注册表里记的路径和当前程序不一致（程序被挪过位置、或换了安装目录）。 */
+  stale: boolean;
+  /** 当前程序路径。`null` 表示拿不到。 */
+  current: string | null;
+}
+
+export const autostartStatus = () => invoke<Autostart>("autostart_status");
+
+/** 开 / 关自启，返回**写完重新读到的**状态，不是把入参回传。 */
+export const setAutostart = (enabled: boolean) =>
+  invoke<Autostart>("set_autostart", { enabled });
+
+/** 托盘菜单拨了暂停开关时触发，带上拨完之后的状态。 */
+export const onPauseChanged = (cb: (paused: boolean) => void) =>
+  listen<boolean>("pause-changed", (e) => cb(e.payload));
+
+/**
+ * 点窗口的 X 收进托盘时触发。
+ *
+ * 前端只在**第一次**时提示一句「还在后台计数」——安静地把程序留在后台运行
+ * 而不告诉用户，是这个项目一直在防的那种「界面和事实不符」。
+ * 「是不是第一次」跟着用户而不是跟着进程，所以判断留在前端。
+ */
+export const onWindowHidden = (cb: () => void) =>
+  listen("window-hidden", () => cb());
 
 /** 把 YYYY-MM-DD 往前推 n 天，用于趋势图的默认区间。 */
 export function shiftDay(day: string, days: number): string {

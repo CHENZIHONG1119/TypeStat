@@ -53,12 +53,40 @@ export function pickMetrics(
 }
 
 /**
- * 图表取点：没有精确数据时给 `null`，ECharts 会留空而不是画 0。
+ * 字数口径下一格的取值：`null` = **量不到**，数字 = 量到了（`0` 就是真的 0）。
  *
- * 热力图那边是「不 push 这一格」，效果一样（留白）。
+ * **判据是「这一格里有没有人打字」，不是 `hasChar`。** 这一条极容易写反，
+ * 而且写反了界面照样好看，只是把两件事对调了：
+ *
+ * 后端补齐的空格子长的是 `hasChar: false, keyInput: 0`——`hour_profile` 恒定
+ * 返回 24 行、`daily_series` 缺的天由调用方补上——那是一个**确定的 0**：
+ * 没有按键就不可能产生字符。只看 `hasChar` 会把它印成「量不到」，
+ * 于是「那一小时真的没打字」和「那一小时在打字但字数无从得知」在屏幕上一模一样。
+ * **区分这两件事就是这个程序存在的理由**，在别处对、在这里反了，等于白做。
+ *
+ * 反过来，`keyInput > 0 && !hasChar` 才是真正的量不到：那个时段确实在敲，
+ * 只是没有适配器告诉我们敲出了几个字。
+ *
+ * 删除键也一起看：只按了退格、没按过字母的一格，`keyInput` 是 0 但那一格有活动，
+ * 不该被当成「没打字」。
  */
-export const point = (mode: MetricMode, hasChar: boolean, char: number, key: number) =>
-  mode === "char" ? (hasChar ? char : null) : key;
+export function preciseValue(
+  p: {
+    hasChar: boolean;
+    keyInput: number;
+    keyDelete: number;
+    charInput: number;
+    charDelete: number;
+  },
+  field: "charInput" | "charDelete",
+): number | null {
+  if (p.keyInput === 0 && p.keyDelete === 0) return 0;
+  return p.hasChar ? p[field] : null;
+}
+
+/** 一格完全没有任何输入（键和退格都没有）。质量带靠它决定画不画。 */
+export const isBlankCell = (p: { keyInput: number; keyDelete: number }) =>
+  p.keyInput === 0 && p.keyDelete === 0;
 
 /**
  * 精确字数的覆盖率说明。

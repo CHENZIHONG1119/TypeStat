@@ -1,6 +1,16 @@
 //! 前端可调用的 Tauri 命令。
 //!
-//! 全部是只读查询（除了设置项），UI 轮询或收到 `stats-updated` 事件后调用。
+//! 分三类，**动手加一个之前先分清自己要写的是哪一类**：
+//!
+//! - **只读查询**（大多数）：UI 轮询，或收到 `stats-updated` 事件后调用。
+//! - **会写东西的**：改设置、装 WPS 加载项、导出文件、开资源管理器、改开机自启。
+//!   它们写的是设置和文件，**统计数字一行都不写**——那几张表只有采集线程里的
+//!   `db::write_batch` 写，这是「同一分钟只有一个写入者」的前提。
+//!   （本文件里一条裸 SQL 都没有，全部走 `db::`，所以这条是能一眼查的。）
+//! - **要出网的**：只有 `report_generate` 和 `report_catchup`。它们必须是 `async fn`，
+//!   而且必须让开数据库锁——单次最长几十秒，持着锁等就是全界面一起卡死，
+//!   而同步的 `#[tauri::command]` 在 Tauri 2 里跑在主线程上，还会把 webview 冻住。
+//!   三段式的理由写在 `report_generate` 上面。
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -8,9 +18,11 @@ use std::path::PathBuf;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
+use crate::adapters::wps;
 use crate::db;
+use crate::export;
 use crate::hook;
 use crate::report;
 use crate::report::llm;
@@ -37,6 +49,19 @@ pub struct AppState {
 /// 把 rusqlite 错误转成前端能读的字符串。
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
+}
+
+/// `export::export_dir` 的退路：数据库所在目录。
+///
+/// 只在读不到 `%USERPROFILE%` 时才用得上。抽出来是因为现在有三处要它
+/// （导出数据、打开导出目录、存出适配器文件），而三份拷贝里任何一份写错
+/// 都不会报错——它会在一个意外的地方建目录，且看上去一切正常。
+fn export_fallback(state: &AppState) -> PathBuf {
+    state
+        .db_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| state.db_path.clone())
 }
 
 #[derive(Debug, Serialize)]
@@ -221,6 +246,10 @@ pub fn set_setting(state: State<'_, AppState>, key: String, value: String) -> Re
 pub struct HookStatus {
     pub alive: bool,
     pub event_count: u64,
+    /// 看门狗此刻看到的输入时刻。**这几个数是判断钩子死活的唯一依据**，
+    /// 所以跟着状态一起露出来：钩子被系统摘掉时没有任何通知，
+    /// 没有它们就只剩「日志里有没有那行」这一个反证，而「没打印」是推不出结论的。
+    pub health: hook::watchdog::Health,
 }
 
 #[tauri::command]
@@ -228,6 +257,7 @@ pub fn hook_status(state: State<'_, AppState>) -> HookStatus {
     HookStatus {
         alive: state.hook.is_alive(),
         event_count: hook::event_count(),
+        health: hook::watchdog::health(),
     }
 }
 
@@ -252,18 +282,37 @@ pub struct AdapterStatus {
 pub fn adapter_status(state: State<'_, AppState>) -> AdapterStatus {
     AdapterStatus {
         port: state.adapter_port,
-        // 优先读实时值——用户可能刚点过"重新生成"。
-        token: crate::adapters::ipc::current_token().unwrap_or_else(|| state.adapter_token.clone()),
+        // `live_adapter_token` 而不是 `state.adapter_token`——用户可能刚点过
+        // 「重新生成」，那个字段从那时起就是旧的了。详见那个函数。
+        token: live_adapter_token(&state),
         last_report_at: crate::adapters::ipc::last_report_at(),
     }
 }
 
 /// 重新生成 token 并持久化。已装好的插件需要同步改，所以返回新值给界面展示。
+///
+/// **顺序是「先生成新值 → 落库 → 最后才换内存里的值」，不能颠倒。**
+/// 先换内存、后落库的写法（原来就是）在落库失败时会留下一个几乎无法倒查的状态：
+/// 内存里已经是新 token，`settings` 表里还是旧的，而 `adapter_status` 优先读内存
+/// ——于是界面上显示的是新 token，插件拿旧 token 上报全被拒（插件侧只是静默地
+/// 不再有数据），用户重启一下又「自己好了」（那时从表里读回旧的）。
+/// 落库失败就该整体失败，内存里那半截改动一步都不做。
 #[tauri::command]
 pub fn rotate_adapter_token(state: State<'_, AppState>) -> Result<String, String> {
-    let fresh = crate::adapters::ipc::rotate_token().ok_or("接收端未启动，无法生成 token")?;
-    let conn = state.db.lock();
-    db::set_setting(&conn, "adapter_token", &fresh).map_err(err)?;
+    // 接收端没起来时 `set_token` 无处可写，先挡掉，别让表里的值和一个
+    // 不存在的接收端对上。
+    if crate::adapters::ipc::current_token().is_none() {
+        return Err("接收端未启动，无法生成 token".into());
+    }
+
+    let fresh = crate::adapters::ipc::random_token();
+    {
+        let conn = state.db.lock();
+        db::set_setting(&conn, "adapter_token", &fresh).map_err(err)?;
+    } // ← 锁在这里落，和下面的赋值没有交集。
+
+    // 到这一步落库已经成功，换内存值不会再失败。
+    crate::adapters::ipc::set_token(fresh.clone());
     Ok(fresh)
 }
 
@@ -586,4 +635,189 @@ pub fn report_save_settings(
         db::set_setting(&conn, KEY_SECRET, &stored).map_err(err)?;
     }
     Ok(())
+}
+
+// ---------- 导出 ----------
+
+/// 把一段区间的数据写成文件，返回它的位置。
+///
+/// `from` / `to` 传 `None` 表示「库里最早的一天」/「今天」——让用户自己去想
+/// 「我第一天用是什么时候」是荒唐的，而拿一个固定日期当起点会让区间看着像假的。
+#[tauri::command]
+pub fn export_data(
+    state: State<'_, AppState>,
+    format: String,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<export::ExportResult, String> {
+    let fmt = export::Format::parse(&format)?;
+    let to = match to {
+        Some(t) => export::check_day(&t)?,
+        None => today_str(),
+    };
+    let from = match from {
+        Some(f) => export::check_day(&f)?,
+        None => {
+            let conn = state.db.lock();
+            db::first_day(&conn)
+                .map_err(err)?
+                .ok_or("库里还没有任何记录，没有可导出的东西")?
+        }
+    };
+    // 反着的区间查出来是空的，但报出来的是一个「这段没有记录」——
+    // 那和「你把日期填反了」是两回事，得说清楚是哪一件。
+    if from > to {
+        return Err(format!("起始日期 {from} 排在结束日期 {to} 后面"));
+    }
+
+    let (days, spans, hours, apps) = {
+        let conn = state.db.lock();
+        (
+            db::daily_series(&conn, &from, &to).map_err(err)?,
+            db::typing_spans(&conn, &from, &to).map_err(err)?,
+            db::hour_profile(&conn, &from, &to).map_err(err)?,
+            db::app_breakdown_range(&conn, &from, &to).map_err(err)?,
+        )
+    }; // ← 锁在这里落。写文件不持锁。
+
+    if days.is_empty() {
+        return Err(format!("{from} 到 {to} 之间没有任何记录"));
+    }
+
+    let (text, rows) = match fmt {
+        export::Format::Csv => (export::csv_days(&days, &spans), days.len()),
+        export::Format::Json => {
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z").to_string();
+            let text = export::json_dump(&from, &to, &now, &days, &spans, &hours, &apps)?;
+            (text, days.len() + hours.len() + apps.len())
+        }
+    };
+
+    let dir = export::export_dir(&export_fallback(&state));
+    let stem = format!("typestat-{from}_{to}");
+    let path = export::write_unique(&dir, &stem, fmt.ext(), &text)
+        .map_err(|e| format!("写文件失败：{e}"))?;
+
+    Ok(export::ExportResult {
+        path: path.display().to_string(),
+        dir: dir.display().to_string(),
+        rows,
+        // 字节数是**写出去的那份文本**的长度，不是文件元数据——
+        // 里面含 BOM 和 CRLF，正好是用户实际拿到的那个大小。
+        bytes: text.len(),
+        from,
+        to,
+    })
+}
+
+/// 在资源管理器里打开导出目录。
+///
+/// **不收参数，目录由后端自己算。** 这个命令会启动一个外部程序，而参数来自
+/// webview——虽然这个 webview 只加载本地页面，但「能打开任意路径」是一个
+/// 没有任何用处的额外能力，不给它就没有被滥用的余地。
+#[tauri::command]
+pub fn open_export_dir(state: State<'_, AppState>) -> Result<String, String> {
+    let dir = export::export_dir(&export_fallback(&state));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败：{e}"))?;
+    // 不等它结束（explorer.exe 的退出码本来就是 1），只确认能起来。
+    std::process::Command::new("explorer")
+        .arg(&dir)
+        .spawn()
+        .map_err(|e| format!("打不开资源管理器：{e}"))?;
+    Ok(dir.display().to_string())
+}
+
+// ---------- 适配器安装 ----------
+
+/// 当前有效的上报令牌。
+///
+/// **不能直接读 `state.adapter_token`。** 那个字段是启动时从设置表读出来的，
+/// 而「重新生成」换掉的是接收端内存里的那一份和表里的那一份——`AppState` 是共享
+/// 引用，改不了它，于是它从换过那一刻起就是**旧的**。谁直接读它，谁就会拿着一个
+/// 已经被接收端拒掉的令牌去装加载项，装完还在界面上报「已经装好了」。
+/// （这个 bug 真的写出来过一次：`adapter_status` 记得优先读实时值，
+/// 而新加的这两个命令忘了——同一个知识点散在几处，就一定会有人漏。）
+///
+/// 接收端没起来时 `current_token()` 是 `None`，退回启动时那份：那种情况下
+/// 上报本来就不通，装进去的那个值只影响「接收端起来之后要不要重装」。
+fn live_adapter_token(state: &AppState) -> String {
+    crate::adapters::ipc::current_token().unwrap_or_else(|| state.adapter_token.clone())
+}
+
+/// WPS 加载项现在装着没有、装的那份令牌是不是当前这个。
+#[tauri::command]
+pub fn wps_addon_status(state: State<'_, AppState>) -> wps::AddonStatus {
+    wps::status(&live_adapter_token(&state))
+}
+
+/// 把 WPS 加载项装进 WPS 的加载项目录。
+///
+/// **端口和令牌由程序自己拿，不收参数。** 它们是程序启动时生成、此刻正在用的
+/// 那两个值，让前端传的话就多了一条「界面上的值可能不是真的值」的路——而这条路上
+/// 出错的表现是「装好了、上报一直被拒」，界面上和「今天没写字」长得一模一样。
+///
+/// 这是这个程序里**第二处会写程序自己以外的地方**（第一处是开机自启写注册表）。
+/// 两处都只在用户明确按下按钮时发生，而且都不碰 WPS 的安装目录。
+#[tauri::command]
+pub fn install_wps_addon(state: State<'_, AppState>) -> Result<wps::InstallResult, String> {
+    // 端口不受「重新生成」影响：接收端只在启动时绑一次，中途不会换。
+    wps::install(&live_adapter_token(&state), state.adapter_port)
+}
+
+/// 把两份适配器的文件存到导出目录下的 `适配器\` 里，给人手动装。
+#[tauri::command]
+pub fn export_adapter_files(state: State<'_, AppState>) -> Result<wps::AddonFiles, String> {
+    let dir = export::export_dir(&export_fallback(&state)).join("适配器");
+    wps::export_files(&dir)
+}
+
+/// 在资源管理器里打开 WPS 的加载项目录。
+///
+/// 和 `open_export_dir` 一样**不收参数**，理由见那里。
+#[tauri::command]
+pub fn open_wps_addon_dir() -> Result<String, String> {
+    let dir = wps::jsaddons_dir()?;
+    // 没装过时这个目录还不存在。建出来：它是加载项自己的家，而「点开文件夹看看
+    // 装到哪儿了」正是判断「到底装没装」的最直接办法——空着也是一种回答。
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败：{e}"))?;
+    std::process::Command::new("explorer")
+        .arg(&dir)
+        .spawn()
+        .map_err(|e| format!("打不开资源管理器：{e}"))?;
+    Ok(dir.display().to_string())
+}
+
+// ---------- 托盘与开机自启 ----------
+
+/// 现在是不是暂停记录。托盘菜单的勾和设置页的开关都看它。
+#[tauri::command]
+pub fn pause_status() -> bool {
+    crate::collector::pause::is_paused()
+}
+
+/// 拨暂停开关，返回拨完之后的状态。
+///
+/// 界面和托盘菜单拨的是同一个开关，所以这里**顺手把托盘那边刷一遍**：
+/// 两处显示的是同一件事，不同步的话会出现「菜单里打着勾、页面上写着正在记录」，
+/// 而用户没有别的办法判断哪个是真的。
+#[tauri::command]
+pub fn set_paused(app: tauri::AppHandle, paused: bool) -> bool {
+    let now = crate::collector::pause::set_paused(paused);
+    if let Some(t) = app.try_state::<crate::tray::Tray>() {
+        t.apply_pause(now);
+    }
+    now
+}
+
+/// 开机自启现在的状态：开没开、注册表里指的是哪个路径、那个路径还是不是当前程序。
+#[tauri::command]
+pub fn autostart_status() -> Result<crate::autostart::Autostart, String> {
+    crate::autostart::status()
+}
+
+/// 开 / 关开机自启。返回写完之后重新读到的状态——**不是把入参原样回传**：
+/// 写注册表可能被拦（组策略、权限），回传入参的话界面会显示一个并不成立的状态。
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> Result<crate::autostart::Autostart, String> {
+    crate::autostart::set(enabled)
 }
