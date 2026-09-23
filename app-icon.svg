@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect x="0" y="0" width="1024" height="1024" rx="180" fill="#2a78d6"/>
+  <text x="512" y="530" font-family="system-ui, 'Segoe UI', sans-serif" font-size="580"
+        font-weight="700" fill="#ffffff" text-anchor="middle" dominant-baseline="central">T</text>
+</svg>

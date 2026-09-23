@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<JsPlugin>
+  <ApiVersion>1.0.0</ApiVersion>
+  <Name>TypeStat</Name>
+  <Description>把 WPS 文字里精确的新增/删除字符数上报给 TypeStat。只上报两个整数，正文内容不出文档。</Description>
+</JsPlugin>

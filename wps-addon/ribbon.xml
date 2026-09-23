@@ -1,0 +1,13 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+    <ribbon startFromScratch="false">
+        <tabs>
+            <tab id="typestatTab" label="TypeStat">
+                <group id="typestatGroup" label="打字统计">
+                    <button id="btnStatus" label="统计状态" screentip="看加载项是否在收事件、增删有没有记反" onAction="OnAction" enabled="true" visible="true"/>
+                    <button id="btnTest" label="测试连接" screentip="向 TypeStat 发一次空上报，验证端口和令牌" onAction="OnAction" enabled="true" visible="true"/>
+                    <button id="btnReconnect" label="重连监听" screentip="重新注册 ContentChange 监听，用于排查「突然不再统计」" onAction="OnAction" enabled="true" visible="true"/>
+                </group>
+            </tab>
+        </tabs>
+    </ribbon>
+</customUI>

@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>键盘热力图 · 三个方案</title>
+<style>
+  /*
+   * 配色直接搬自 src/theme.ts，数值一致——demo 里看着合适，搬进应用才是同一个东西。
+   * 顺序色阶已用 validate_palette.js 双模式校验：
+   *   明度单调    light 0.905→0.338   dark 0.338→0.905  （深色底反转，让高值更亮）
+   *   对比度      light/dark 各有 4–6 档低于 3:1 —— 所以键的描边不能靠填充色，
+   *               必须独立可见，否则低使用率的键会"消失"在底色里。
+   */
+  :root {
+    --surface: #fcfcfb;
+    --plane: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.14);
+    --key-empty: #f2f1ec;
+  }
+  :root[data-theme="dark"] {
+    --surface: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.18);
+    --key-empty: #232322;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 32px 28px 80px;
+    background: var(--plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header { max-width: 1180px; margin: 0 auto 8px; }
+  h1 { font-size: 22px; margin: 0 0 6px; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 13.5px; margin: 0; line-height: 1.6; }
+
+  .warn {
+    max-width: 1180px; margin: 14px auto 0;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; font-size: 12.5px; line-height: 1.6;
+    color: var(--text-secondary); background: var(--surface);
+  }
+  .warn strong { color: var(--text-primary); }
+
+  .controls {
+    max-width: 1180px; margin: 18px auto 0;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  button {
+    appearance: none; font: inherit; font-size: 13px;
+    color: var(--text-primary); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--axis); }
+
+  section { max-width: 1180px; margin: 40px auto 0; }
+  h2 { font-size: 16px; margin: 0 0 4px; font-weight: 620; }
+  h2 .tag {
+    font-size: 11px; font-weight: 500; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 8px; margin-left: 8px; vertical-align: 1px;
+  }
+  .desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 4px; line-height: 1.65; max-width: 900px; }
+  .desc b { color: var(--text-primary); font-weight: 600; }
+  .desc em { font-style: normal; color: var(--muted); }
+
+  .summary {
+    font-size: 12.5px; color: var(--muted);
+    margin: 10px 0 12px; display: flex; gap: 18px; flex-wrap: wrap;
+  }
+  .summary b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 键盘 ---------- */
+
+  .kb {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    width: max-content;
+    margin-bottom: 14px;
+  }
+
+  .key {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    /* 描边独立于填充：低使用率的键靠它才不至于消失 */
+    border: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 550;
+    user-select: none;
+    cursor: default;
+    transition: box-shadow 90ms ease, transform 90ms ease;
+  }
+  .key:hover {
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text-primary);
+    z-index: 5;
+  }
+  .key .cap { position: relative; z-index: 2; pointer-events: none; }
+
+  /* 方案 C 的键内量值条：颜色给模式，条长给精确量级。
+     必须先画满宽的轨道，否则一根短条和一个没有条的键看起来是一样的。 */
+  .key .track {
+    position: absolute; left: 3px; right: 3px; bottom: 3px;
+    border-radius: 2px;
+    background: currentColor; opacity: 0.15;
+    pointer-events: none;
+  }
+  .key .bar {
+    position: absolute; left: 3px; right: 3px; bottom: 3px;
+    border-radius: 2px;
+    background: currentColor; opacity: 0.62;
+    pointer-events: none;
+  }
+
+  /* ---------- 图例 ---------- */
+
+  .legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .ramp {
+    height: 12px; width: 260px; border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .ticks { display: flex; width: 260px; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .bins { display: flex; gap: 2px; }        /* 2px 间隙，和规范一致 */
+  .bins .sw {
+    width: 40px; height: 12px; border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .binlabels { display: flex; gap: 2px; }
+  .binlabels span { width: 40px; text-align: center; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 提示框 ---------- */
+
+  #tip {
+    position: fixed; pointer-events: none; opacity: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 11px;
+    font-size: 12px; line-height: 1.55;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+    transition: opacity 90ms ease;
+    z-index: 100;
+    white-space: nowrap;
+  }
+  #tip .k { font-weight: 650; font-size: 13px; }
+  #tip .n { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+  #tip .m { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>键盘热力图 · 三个方案</h1>
+  <p class="sub">
+    同一份数据、同一套配色，三种表达方式。鼠标移到键位上看具体次数。<br>
+    按键布局为 ANSI 60%，5 行共 15 个键位单位宽——方案 A / C 还原真实错位，方案 B 对齐列。
+  </p>
+  <div class="warn">
+    <strong>⚠ 这是示例数据，不是你的真实数据。</strong>
+    程序目前只按「分钟 × 应用」汇总，没有记录每个键按了多少次。要出这张图，需要先加一张按键明细表并重新编译运行——
+    越早开始收集，你越早有真实数据可用（历史数据补不回来）。
+  </div>
+  <div class="controls">
+    <button id="themeBtn">切换到深色</button>
+    <button id="scaleBtn">缩放：平方根（推荐）</button>
+  </div>
+</header>
+
+<section>
+  <h2>方案 A · 真实错位键盘 + 分档色阶<span class="tag">最像键盘</span></h2>
+  <p class="desc">
+    还原真实键盘的逐行错位，视觉上不需要解释就知道是什么。
+    色阶分成 <b>6 个明确的档位</b>，图例标出每档的实际次数区间，所以你能直接读出「这个键大概几百下」，
+    而不是只能比出「这个键比那个键多」。代价是档位内部的高低差被抹平了。
+  </p>
+  <div class="summary" id="sumA"></div>
+  <div class="kb" id="kbA"></div>
+  <div class="legend">
+    <span>按键次数</span>
+    <div>
+      <div class="bins" id="binSwA"></div>
+      <div class="binlabels" id="binLbA" style="margin-top:4px"></div>
+      <div style="font-size:10.5px; margin-top:2px;">↑ 每档的上限（悬停看区间）</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>方案 B · 正交网格 + 连续色阶<span class="tag">最好比较</span></h2>
+  <p class="desc">
+    去掉错位，所有行左对齐，字母区因此形成规整的列——<b>同一根手指负责的那一列一眼可辨</b>，
+    横向比较负载变得容易。色阶连续不分档，整体模式更平滑好看。
+    代价是颜色深浅没法读出确切的数，只能靠悬停。
+  </p>
+  <div class="summary" id="sumB"></div>
+  <div class="kb" id="kbB"></div>
+  <div class="legend">
+    <span>按键次数</span>
+    <div>
+      <div class="ramp" id="rampB"></div>
+      <div class="ticks" id="ticksB" style="margin-top:4px"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>方案 C · 错位键盘 + 色阶 + 键内量值条<span class="tag">最精确</span></h2>
+  <p class="desc">
+    颜色负责整体模式，键底部的横条负责精确量级，同一个量用两种方式表达。
+    好处是<b>不用悬停就能比出大小</b>——纯颜色在低值区几乎分不出来，条形长度不会。
+    代价是视觉更密，` 和 / 这类窄键上的条很短，聊胜于无。
+  </p>
+  <div class="summary" id="sumC"></div>
+  <div class="kb" id="kbC"></div>
+  <div class="legend">
+    <span>按键次数</span>
+    <div>
+      <div class="ramp" id="rampC"></div>
+      <div class="ticks" id="ticksC" style="margin-top:4px"></div>
+    </div>
+  </div>
+</section>
+
+<div id="tip"></div>
+
+<script>
+'use strict';
+
+/* ============================ 配色 ============================ */
+
+const TOKENS = {
+  light: {
+    surface: '#fcfcfb',
+    textPrimary: '#0b0b0b',
+    sequential: ['#cde2fb','#b7d3f6','#9ec5f4','#86b6ef','#6da7ec','#5598e7','#3987e5',
+                 '#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'],
+  },
+  dark: {
+    surface: '#1a1a19',
+    textPrimary: '#ffffff',
+    // 深色底反转色阶，让"接近零"贴近深色画布——直接沿用浅色版会把量级读反
+    sequential: ['#0d366b','#104281','#184f95','#1c5cab','#256abf','#2a78d6','#3987e5',
+                 '#5598e7','#6da7ec','#86b6ef','#9ec5f4','#b7d3f6','#cde2fb'],
+  },
+};
+
+/* ============================ 键盘布局 ============================ */
+/* 每行合计 15 个键位单位，各行共用同一套网格，所以竖列能对齐。 */
+
+const ROWS = [
+  { keys: [['`',1],['1',1],['2',1],['3',1],['4',1],['5',1],['6',1],['7',1],['8',1],['9',1],['0',1],['-',1],['=',1],['⌫',2]] },
+  { keys: [['Tab',1.5],['Q',1],['W',1],['E',1],['R',1],['T',1],['Y',1],['U',1],['I',1],['O',1],['P',1],['[',1],[']',1],['\\',1.5]] },
+  { keys: [['Caps',1.75],['A',1],['S',1],['D',1],['F',1],['G',1],['H',1],['J',1],['K',1],['L',1],[';',1],["'",1],['⏎',2.25]] },
+  { keys: [['Shift',2.25],['Z',1],['X',1],['C',1],['V',1],['B',1],['N',1],['M',1],[',',1],['.',1],['/',1],['Shift',2.75]] },
+  { keys: [['Ctrl',1.25],['Win',1.25],['Alt',1.25],['Space',6.25],['Alt',1.25],['Win',1.25],['Menu',1.25],['Ctrl',1.25]] },
+];
+
+/* 真实键盘的逐行错位（单位：键位宽度） */
+const STAGGER = [0, 0.25, 0.5, 0.75, 0.25];
+
+/* ============================ 示例数据 ============================ */
+/* 按中文拼音输入 + 写论文的实际分布编的：空格最高（分音节），i/n/a/o/e/u 次之，
+ * 退格很高（写作常态），数字和符号很低。真实数据一定也是这种长尾形状。 */
+
+const COUNTS = {
+  'Space': 3210, '⌫': 980, '⏎': 186,
+  'I': 1450, 'N': 1320, 'A': 1180, 'O': 1050, 'E': 990, 'U': 880,
+  'H': 810, 'G': 760, 'S': 700, 'Z': 690, 'J': 620, 'L': 600,
+  'D': 580, 'Y': 560, 'T': 540, 'R': 500, 'C': 480, 'M': 460,
+  'W': 400, 'F': 380, 'B': 350, 'P': 330, 'K': 300, 'Q': 280,
+  'V': 260, 'X': 250, 'Shift': 225, 'Tab': 90, ';': 62, "'": 55,
+  ',': 150, '.': 140, '/': 35, '-': 30, '=': 26, '[': 25, ']': 22,
+  '\\': 18, '`': 12, 'Ctrl': 40, 'Alt': 12, 'Win': 8, 'Menu': 2,
+  '1': 45, '2': 38, '3': 30, '4': 26, '5': 24, '6': 22,
+  '7': 20, '8': 18, '9': 16, '0': 14, 'Caps': 20,
+};
+
+/* ============================ 工具 ============================ */
+
+function relativeLuminance(hex) {
+  const c = hex.replace('#', '');
+  const ch = [0, 2, 4]
+    .map((i) => parseInt(c.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+function contrastRatio(a, b) {
+  const hi = Math.max(a, b), lo = Math.min(a, b);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const DARK_INK = '#0b0b0b';
+const WHITE_INK = '#ffffff';
+
+/** 键帽文字用哪种墨色，取决于填充色的亮度——深蓝底配黑字会糊成一团。 */
+function inkFor(fill) {
+  const L = relativeLuminance(fill);
+  return contrastRatio(L, relativeLuminance(WHITE_INK)) >= contrastRatio(L, relativeLuminance(DARK_INK))
+    ? WHITE_INK
+    : DARK_INK;
+}
+
+/**
+ * 归一化。默认走平方根而不是线性。
+ *
+ * 空格 3210 次、` 只有 12 次，差 267 倍。线性映射的话所有 500 以下的键
+ * 会挤进色阶最浅的三分之一，糊成一片——而绝大多数键都在那个区间。
+ * 平方根把比值压到 16 倍，低值区才分得出层次。
+ */
+let useSqrt = true;
+function normalize(count, max) {
+  if (!useSqrt) return count / max;
+  return Math.sqrt(count) / Math.sqrt(max);
+}
+
+function rampAt(t, ratio) {
+  const seq = t.sequential;
+  const r = Math.max(0, Math.min(1, ratio));
+  return seq[Math.round(r * (seq.length - 1))];
+}
+
+/** 把 [0,1] 切成 n 档，返回每档的序号。 */
+function binOf(ratio, n) {
+  return Math.min(n - 1, Math.floor(ratio * n));
+}
+
+function fmt(n) {
+  return n.toLocaleString('zh-CN');
+}
+
+/* ============================ 渲染 ============================ */
+
+const state = { theme: 'light' };
+
+function tokens() {
+  return TOKENS[state.theme];
+}
+
+/**
+ * 画一个键盘。
+ * variant: 'bins'   分档色阶（A）
+ *          'ramp'   连续色阶（B）
+ *          'bars'   连续色阶 + 键内量条（C）
+ */
+function renderKeyboard(el, variant, alignColumns) {
+  const t = tokens();
+  const u = 46, gap = 4;
+  const BIN_COUNT = 6;
+
+  const all = [];
+  ROWS.forEach((row, ri) => {
+    let x = alignColumns ? 0 : STAGGER[ri];
+    row.keys.forEach(([label, w]) => {
+      all.push({ label, w, x, row: ri });
+      x += w;
+    });
+  });
+
+  const counts = all.map((k) => COUNTS[k.label] || 0);
+  const max = Math.max(...counts);
+  const total = counts.reduce((a, b) => a + b, 0);
+
+  el.innerHTML = '';
+  el.style.width = ((alignColumns ? 15 : 16) * u + 24) + 'px';
+  el.style.height = (ROWS.length * u + 24) + 'px';
+
+  const tipped = [];
+
+  all.forEach((k) => {
+    const count = COUNTS[k.label] || 0;
+    const ratio = normalize(count, max);
+
+    const div = document.createElement('div');
+    div.className = 'key';
+    div.style.left = (k.x * u + 12) + 'px';
+    div.style.top = (k.row * u + 12) + 'px';
+    div.style.width = (k.w * u - gap) + 'px';
+    div.style.height = (u - gap) + 'px';
+
+    let fill;
+    if (variant === 'bins') {
+      fill = t.sequential[Math.round((binOf(ratio, BIN_COUNT) / (BIN_COUNT - 1)) * (t.sequential.length - 1))];
+    } else {
+      fill = rampAt(t, ratio);
+    }
+    div.style.background = fill;
+    div.style.color = count > 0 ? inkFor(fill) : 'var(--muted)';
+    div.style.borderColor = 'var(--border)';
+
+    const cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.textContent = k.label;
+    div.appendChild(cap);
+
+    if (variant === 'bars' && count > 0) {
+      const track = document.createElement('div');
+      track.className = 'track';
+      track.style.height = (u - gap - 8) + 'px';
+      div.appendChild(track);
+
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = Math.max(2, Math.round(ratio * (u - gap - 8))) + 'px';
+      div.appendChild(bar);
+    }
+
+    tipped.push({ el: div, label: k.label, count });
+    el.appendChild(div);
+  });
+
+  tip.attach(tipped, total);
+  return { total, max, top: tipped.slice().sort((a, b) => b.count - a.count)[0] };
+}
+
+/* ============================ 提示框 ============================ */
+
+const tip = (() => {
+  const node = document.getElementById('tip');
+  let items = new Map();
+  let total = 0;
+
+  function move(e) {
+    const pad = 14;
+    const r = node.getBoundingClientRect();
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    // 贴边时翻到另一侧，避免被视口切掉
+    if (x + r.width > window.innerWidth - 8) x = e.clientX - r.width - pad;
+    if (y + r.height > window.innerHeight - 8) y = e.clientY - r.height - pad;
+    node.style.left = Math.max(8, x) + 'px';
+    node.style.top = Math.max(8, y) + 'px';
+  }
+
+  return {
+    attach(list, tot) {
+      items = new Map(list.map((i) => [i.el, i]));
+      total = tot;
+      list.forEach((i) => {
+        i.el.addEventListener('mouseenter', (e) => {
+          const pct = total > 0 ? (i.count / total) * 100 : 0;
+          node.innerHTML =
+            '<div class="k">' + (i.label === ' ' ? 'Space' : i.label) + '</div>' +
+            '<div class="n">' + fmt(i.count) + ' 次</div>' +
+            '<div class="m">占全部按键 ' + pct.toFixed(1) + '%</div>';
+          node.style.opacity = '1';
+          move(e);
+        });
+        i.el.addEventListener('mousemove', move);
+        i.el.addEventListener('mouseleave', () => { node.style.opacity = '0'; });
+      });
+    },
+  };
+})();
+
+/* ============================ 图例 ============================ */
+
+function renderRampLegend(rampEl, ticksEl, max) {
+  const t = tokens();
+  rampEl.style.background = 'linear-gradient(90deg,' + t.sequential.join(',') + ')';
+  // 刻度值反推：位置 p 对应 normalize 后的 p，所以实际值 = (p^2)*max（平方根缩放）
+  ticksEl.innerHTML = [0, 0.25, 0.5, 0.75, 1]
+    .map((p) => {
+      const v = useSqrt ? Math.round(p * p * max) : Math.round(p * max);
+      return '<span>' + fmt(v) + '</span>';
+    })
+    .join('');
+}
+
+function renderBinLegend(swEl, lbEl, max) {
+  const t = tokens();
+  const n = 6;
+  swEl.innerHTML = '';
+  lbEl.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const fill = t.sequential[Math.round((i / (n - 1)) * (t.sequential.length - 1))];
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.style.background = fill;
+    swEl.appendChild(sw);
+
+    // 每档覆盖的归一化区间 [i/n, (i+1)/n]，反推回实际次数。
+    // 标注用**上界**："这个颜色代表不超过 N 次"。标下界会让人以为
+    // 最后一档是开放的（3,210+），但分档是把 [0, 最大值] 完整切开的。
+    const lo = Math.round(Math.pow(i / n, 2) * max);
+    const hi = Math.round(Math.pow((i + 1) / n, 2) * max);
+    const lb = document.createElement('span');
+    lb.textContent = fmt(hi);
+    lb.title = fmt(lo) + ' – ' + fmt(hi) + ' 次';
+    lbEl.appendChild(lb);
+  }
+}
+
+function renderSummary(el, stat, note) {
+  el.innerHTML =
+    '总按键 <b>' + fmt(stat.total) + '</b>' +
+    '最高键 <b>' + stat.top.label + ' ' + fmt(stat.top.count) + '</b>' +
+    '峰值 <b>' + fmt(stat.max) + '</b>' +
+    '<span>' + note + '</span>';
+}
+
+/* ============================ 装配 ============================ */
+
+const kbA = document.getElementById('kbA');
+const kbB = document.getElementById('kbB');
+const kbC = document.getElementById('kbC');
+
+function renderAll() {
+  const a = renderKeyboard(kbA, 'bins', false);
+  const b = renderKeyboard(kbB, 'ramp', true);
+  const c = renderKeyboard(kbC, 'bars', false);
+
+  renderBinLegend(document.getElementById('binSwA'), document.getElementById('binLbA'), a.max);
+  renderRampLegend(document.getElementById('rampB'), document.getElementById('ticksB'), b.max);
+  renderRampLegend(document.getElementById('rampC'), document.getElementById('ticksC'), c.max);
+
+  renderSummary(document.getElementById('sumA'), a, '色阶分 6 档，档内差异被抹平');
+  renderSummary(document.getElementById('sumB'), b, '列对齐，纵向可比手指负载');
+  renderSummary(document.getElementById('sumC'), c, '色阶 + 键内量条，双重编码');
+}
+
+document.getElementById('themeBtn').addEventListener('click', (e) => {
+  state.theme = state.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = state.theme;
+  e.target.textContent = state.theme === 'light' ? '切换到深色' : '切换到浅色';
+  renderAll();
+});
+
+document.getElementById('scaleBtn').addEventListener('click', (e) => {
+  useSqrt = !useSqrt;
+  e.target.textContent = '缩放：' + (useSqrt ? '平方根（推荐）' : '线性');
+  renderAll();
+});
+
+renderAll();
+</script>
+</body>
+</html>

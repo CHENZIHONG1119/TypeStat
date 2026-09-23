@@ -1,0 +1,9 @@
+{
+  "id": "typestat",
+  "name": "TypeStat 字数上报",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "把精确的增删字符数上报给 TypeStat，只上报两个整数，不上报任何文本内容。",
+  "author": "TypeStat",
+  "isDesktopOnly": true
+}

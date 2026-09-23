@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TypeStat 界面重设计 · 三个方向</title>
+<style>
+:root{
+  color-scheme:light;
+  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e;
+  --muted:#898781; --border:rgba(11,11,11,.10); --s1:#2a78d6;
+}
+@media (prefers-color-scheme:dark){:root{
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7;
+  --muted:#898781; --border:rgba(255,255,255,.10); --s1:#3987e5;
+}}
+*{box-sizing:border-box}
+body{
+  margin:0; padding:56px 40px 80px; background:var(--plane); color:var(--ink);
+  font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1100px; margin:0 auto}
+h1{font-size:26px; font-weight:660; letter-spacing:-.02em; margin:0 0 10px}
+.lede{color:var(--ink2); margin:0 0 6px; max-width:64em}
+.lede b{color:var(--ink)}
+.hint{color:var(--muted); font-size:13px; margin:14px 0 34px}
+
+.grid{display:grid; grid-template-columns:repeat(3,1fr); gap:20px}
+a.card{
+  display:block; text-decoration:none; color:inherit;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; overflow:hidden; transition:border-color .15s, transform .15s;
+}
+a.card:hover{border-color:var(--s1); transform:translateY(-2px)}
+.thumb{height:150px; border-bottom:1px solid var(--border); padding:16px; position:relative; overflow:hidden}
+
+/* 三张缩略图各自暗示那个方案的骨架 */
+.t-a{display:flex; flex-direction:column; gap:8px}
+.t-a .band{height:56px; border:1px solid var(--border); border-radius:6px;
+  background:
+    linear-gradient(to top, var(--s1) 0 100%) no-repeat 62% 100% / 12% 62%,
+    repeating-linear-gradient(45deg, var(--border) 0 3px, transparent 3px 7px) no-repeat 80% 100% / 12% 22%,
+    linear-gradient(to top, var(--s1) 0 100%) no-repeat 70% 100% / 5% 100%;
+}
+.t-a .row3{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; flex:1}
+.t-a .row3 i{display:block; border:1px solid var(--border); border-radius:6px}
+
+.t-b{display:flex; flex-direction:column; gap:9px; align-items:flex-start}
+.t-b .big{font:600 30px/1 Georgia,serif; letter-spacing:-.02em}
+.t-b .ln{height:7px; border-radius:4px; background:var(--border)}
+.t-b .ln.w1{width:82%} .t-b .ln.w2{width:58%}
+.t-b .spark{width:100%; height:34px; margin-top:auto; position:relative}
+.t-b .spark::after{content:""; position:absolute; inset:0;
+  background:linear-gradient(to top,var(--s1) 0 100%) no-repeat 62% 100%/9% 88%,
+             linear-gradient(to top,var(--s1) 0 100%) no-repeat 70% 100%/6% 30%;
+  opacity:.9}
+
+.t-c{display:flex; flex-direction:column; gap:0; background:#0c0c0c; padding:0}
+.t-c .kpi{display:grid; grid-template-columns:repeat(4,1fr); border-bottom:1px solid #2a2a27}
+.t-c .kpi i{display:block; height:34px; border-right:1px solid #2a2a27;
+  background:linear-gradient(to top,#3987e5 0 100%) no-repeat 12px 20px/44% 5px}
+.t-c .kpi i:last-child{border-right:0}
+.t-c .body{flex:1; background:
+  linear-gradient(to top,#3987e5 0 100%) no-repeat 62% 88%/10% 70%;}
+.t-c .body::before{content:""; display:block; height:100%;
+  background:repeating-linear-gradient(0deg,#2a2a27 0 1px,transparent 1px 22px);}
+
+.meta{padding:16px 18px 18px}
+.meta h2{font-size:15px; font-weight:640; margin:0 0 4px}
+.meta .tag{font-size:11.5px; color:var(--muted); letter-spacing:.06em; text-transform:uppercase}
+.meta p{font-size:13px; color:var(--ink2); margin:10px 0 0; line-height:1.7}
+.meta p b{color:var(--ink)}
+.open{margin-top:14px; font-size:12.5px; color:var(--s1)}
+
+.foot{margin-top:44px; font-size:12.5px; color:var(--muted); line-height:1.9;
+      border-top:1px solid var(--border); padding-top:22px; max-width:70em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>TypeStat 界面重设计 · 三个方向</h1>
+  <p class="lede">
+    三份都是<b>可交互的真实页面</b>，用的是你今天的真实数据（2026-09-23：
+    4 个时段有输入，其中只有 17 时拿得到字数）。
+  </p>
+  <p class="lede">
+    三个方向的<b>信息架构不一样</b>，不只是换皮——所以先看结构，再看配色。
+    顶栏的「按键 / 字数」开关都能点，那是这套设计里最关键的一件事。
+  </p>
+  <p class="hint">点卡片打开 · 每个页面都能切深色浅色 · 建议用窗口宽度 1280 以上看</p>
+
+  <a class="card" href="b-full.html" style="display:block; margin-bottom:26px">
+    <div class="meta" style="padding:20px 22px">
+      <div class="tag">方向 B · 定稿</div>
+      <h2 style="font-size:17px">编辑台 · 全功能分页版</h2>
+      <p>按 B 的风格把<b>原来五页里的功能全部重排成十页</b>，一页只讲一件事：
+        今天 / 时段 / 时长 / 趋势 / 热力 / 键位 / 应用 / 明细 / 适配器 / 设置。</p>
+      <p>顶部文字导航切换，口径开关和深浅色全局生效。今天的数据是真的。</p>
+      <div class="open">打开 b-full.html →</div>
+    </div>
+  </a>
+
+  <p class="hint" style="margin-bottom:24px">下面是当初比较的三个方向 ↓</p>
+
+  <div class="grid">
+
+    <a class="card" href="a-timeline.html">
+      <div class="thumb t-a">
+        <div class="band"></div>
+        <div class="row3"><i></i><i></i><i></i></div>
+      </div>
+      <div class="meta">
+        <div class="tag">方向 A</div>
+        <h2>一天</h2>
+        <p>把「今天的一整天」画成一条横贯的时间线，底下三个数字：
+          <b>坐了多久 / 真正在敲 / 手速</b>。8 个指标收成 3 大 + 4 小。</p>
+        <p>适合<b>每天打开看一眼</b>，看完知道今天干了多少。</p>
+        <div class="open">打开 a-timeline.html →</div>
+      </div>
+    </a>
+
+    <a class="card" href="b-editorial.html">
+      <div class="thumb t-b">
+        <div class="big">1 小时 51 分</div>
+        <div class="ln w1"></div>
+        <div class="ln w2"></div>
+        <div class="spark"></div>
+      </div>
+      <div class="meta">
+        <div class="tag">方向 B</div>
+        <h2>编辑台</h2>
+        <p>没有卡片、没有边框，靠<b>字号和留白</b>分层。整页只讲一件事——你写了多久，
+          其余数字降到注释的位置。</p>
+        <p>适合<b>写作的时候放在旁边</b>，它不打扰，也不催你。</p>
+        <div class="open">打开 b-editorial.html →</div>
+      </div>
+    </a>
+
+    <a class="card" href="c-console.html">
+      <div class="thumb t-c">
+        <div class="kpi"><i></i><i></i><i></i><i></i></div>
+        <div class="body"></div>
+      </div>
+      <div class="meta">
+        <div class="tag">方向 C</div>
+        <h2>控制台</h2>
+        <p>等宽字体、密排 KPI 带、带刻度的图。<b>一屏读完不用滚动</b>，
+          八个数排成一条带，应用列表放右边。</p>
+        <p>适合<b>要把数读准</b>的时候，代价是字都很小。</p>
+        <div class="open">打开 c-console.html →</div>
+      </div>
+    </a>
+
+  </div>
+
+  <p class="foot">
+    三个方案都遵守同一套硬规则，因为那不是审美问题：<br>
+    <b>一根轴一种单位</b>——「字」和「键」永远不会出现在同一根轴上，所以口径是全局开关；
+    <b>「量不到」不画成 0</b>——没有适配器的时段给空值而不是零，
+    并用一条细带（斜纹）标出「这里的数不能信」；
+    <b>曲线是插出来的</b>——所有平滑折线都保留真实数据点标记，曲线只当引导线。<br><br>
+    配色沿用现有那套已通过色觉校验的调色板（浅色 CVD ΔE 24.7 / 深色 26.8，目标线是 8），没有改。
+  </p>
+</div>
+</body>
+</html>

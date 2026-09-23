@@ -1,0 +1,81 @@
+[package]
+name = "typestat"
+version = "0.1.0"
+edition = "2021"
+description = "打字统计 — 记录你打了多少字，包括删掉的"
+
+[lib]
+name = "typestat_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = "0.4"
+# 本地接收端：只监听 127.0.0.1，用于接收编辑器插件的精确字数上报
+axum = "0.7"
+# 出站 HTTPS。只有报告正文那一次调用用得到。
+#
+# 这是这个项目第一次引入 TLS：这棵树里原先一个 TLS 实现都没有
+# （lock 里的 reqwest 只是 tauri 给 android 目标的传递条目，Windows 上从不编译）。
+# 二进制和构建时间都会涨一截，release profile 是 opt-level="s" + lto + strip，
+# 本来一直在压体积——这笔钱是为这个功能必须付的。
+#
+# **为什么不用默认的 rustls**（0.13 的 default-tls 已经换成它了）：
+#   1. rustls 那一路的 crypto provider 是 aws-lc-rs，要 cmake + NASM 现编 C 和汇编。
+#      多一个 C 工具链依赖就多一类「在我机器上编不过」，而这里没有任何构建脚本
+#      能替用户兜住那件事。
+#   2. native-tls 在 Windows 上就是 schannel，用系统自带的 TLS 栈，
+#      认系统证书存储。装在代理或杀软后面的机器，根证书在 Windows 存储里；
+#      把根证书编死进二进制的做法会在那里报「证书无效」，用户完全无从判断。
+#   3. 这个 crate 事实上只在 Windows 上编译（src/ 里一个 cfg(not(windows)) 都没有），
+#      所以「native-tls 不可移植」在这里不是代价。
+#
+# 关掉默认特性**不是为了省编解码**——那些（gzip/brotli/zstd/deflate）本来就不在
+# 默认集里。关掉是为了不带 `charset`（encoding_rs + mime）：JSON 接口用不到它。
+# 默认集里另外两项是**故意留下的**：
+#   http2        native-tls 带 ALPN，协商出 h2 而这边没编 h2 支持，是个很难查的死结；
+#   system-proxy 认 Windows 的系统代理设置。用户要是挂代理才能上网，
+#                关掉它就是「在我这儿一直连不上，而报错只说无法连接」。
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "native-tls",
+    "http2",
+    "system-proxy",
+] }
+# `time` 是给 `tauri::async_runtime` 那条 tokio 运行时用的。
+#
+# `Runtime::new()` 走 `enable_all()`，而 `enable_all` 是按 cfg 开关的：
+# 只有 `net` / `time` 真的编进来了，它才会装上对应的 driver。
+# `net` 我们自己声明了；`time` 一直是从 axum/hyper 那边蹭来的——
+# 蹭来的东西哪天不见了，表现是首次超时直接 panic，而 release 是 panic=abort，
+# 也就是说整个程序当场退出。自己声明一行，把「driver 一定在」从巧合变成契约。
+tokio = { version = "1", features = ["net", "rt", "time"] }
+getrandom = "0.2"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    # 报告功能的接口密钥用 DPAPI 加密后存（CryptProtectData / CryptUnprotectData）。
+    # 不用 CRYPTPROTECT_LOCAL_MACHINE，所以别的 Windows 账户解不开。
+    "Win32_Security_Cryptography",
+] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

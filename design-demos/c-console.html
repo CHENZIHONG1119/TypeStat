@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>TypeStat 设计稿 C · 控制台</title>
+<style>
+/* C 方案：**信息密度最高的一版**。
+   一条横向 KPI 带 + 一张主图 + 右侧应用栏，全部塞进一屏，不滚动。
+   等宽字体、直角、网格线——它假设看它的人关心的是「把数读准」，
+   而不是「被一个数字感动」。 */
+:root{
+  color-scheme:dark;
+  --bg:#0c0c0c;
+  --panel:#151514;
+  --panel2:#1b1b19;
+  --line:#2a2a27;
+  --line2:#383835;
+  --ink:#f2efe9;
+  --ink2:#b6b1a6;
+  --muted:#847f75;
+  --s1:#3987e5;
+  --s2:#d95926;
+  --hatch:rgba(242,239,233,.22);
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Courier New",monospace;
+}
+:root[data-theme=light]{
+  color-scheme:light;
+  --bg:#f7f7f5; --panel:#fff; --panel2:#fbfbfa;
+  --line:#e3e3df; --line2:#c9c9c2;
+  --ink:#0f0f0e; --ink2:#4d4c48; --muted:#8b8a84;
+  --s1:#2a78d6; --s2:#eb6834;
+  --hatch:rgba(15,15,14,.2);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font:12.5px/1.45 var(--mono);
+  -webkit-font-smoothing:antialiased;
+}
+.n{font-variant-numeric:tabular-nums}
+
+/* ---------- 标题栏：一条状态行，不是导航 ---------- */
+.titlebar{
+  display:flex; align-items:center; gap:18px;
+  padding:9px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:9;
+}
+.brand{font-weight:700; letter-spacing:.08em; font-size:12.5px}
+.brand span{color:var(--s1)}
+.dim{color:var(--muted)}
+.sp{flex:1}
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:3px; overflow:hidden}
+.seg button{
+  appearance:none; border:0; border-right:1px solid var(--line); background:transparent;
+  color:var(--ink2); font:inherit; font-size:11.5px; padding:3px 11px; cursor:pointer;
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--s1); color:#fff}
+.st{display:inline-flex; align-items:center; gap:6px; color:var(--ink2); font-size:11.5px}
+.st i{width:6px;height:6px;border-radius:50%;background:#22c55e;display:block}
+.tog{appearance:none;border:1px solid var(--line);background:transparent;color:var(--ink2);
+     font:inherit;font-size:11.5px;padding:3px 9px;border-radius:3px;cursor:pointer}
+.tog:hover{color:var(--ink);border-color:var(--line2)}
+
+/* ---------- KPI 带：一格一个数，竖向分隔线 ---------- */
+.kpibar{
+  display:grid; grid-template-columns:repeat(8,1fr);
+  background:var(--panel); border-bottom:1px solid var(--line);
+}
+.kpi{padding:12px 16px; border-right:1px solid var(--line)}
+.kpi:last-child{border-right:0}
+.kpi .k{color:var(--muted); font-size:11px; letter-spacing:.04em; white-space:nowrap}
+.kpi .v{font-size:22px; font-weight:600; letter-spacing:-.01em; margin-top:3px;
+        font-variant-numeric:tabular-nums; line-height:1.15}
+.kpi .v small{font-size:11.5px; font-weight:400; color:var(--ink2); margin-left:2px}
+.kpi .s{font-size:10.5px; color:var(--muted); margin-top:3px; white-space:nowrap;
+        overflow:hidden; text-overflow:ellipsis}
+/* 这一格是「量不到」而不是「0」时，数字留给它一个不同的样子 */
+.kpi.na .v{color:var(--muted)}
+
+/* ---------- 主体：图 + 右栏 ---------- */
+.main{
+  display:grid; grid-template-columns:1fr 320px;
+  align-items:stretch; min-height:520px;
+}
+.pane{border-right:1px solid var(--line); display:flex; flex-direction:column; overflow:hidden}
+.pane:last-child{border-right:0}
+.ph{
+  display:flex; align-items:flex-start; gap:14px;
+  padding:11px 16px; border-bottom:1px solid var(--line); background:var(--panel2);
+}
+.ph h2{margin:0; font-size:12px; font-weight:600; letter-spacing:.05em}
+.ph p{margin:2px 0 0; font-size:11px; color:var(--muted); font-weight:400;
+      letter-spacing:0; line-height:1.5}
+.pb{padding:16px; overflow:auto; flex:1; display:flex; flex-direction:column; justify-content:center}
+#chart svg{display:block; width:100%; height:auto}
+
+/* 图例做成「一行技术注释」 */
+.klrow{display:flex; gap:18px; align-items:center; font-size:11px; color:var(--ink2);
+       margin-top:10px; flex-wrap:wrap}
+.klrow span{display:inline-flex; align-items:center; gap:6px}
+.kl{width:18px; height:5px; display:inline-block; border-radius:1px}
+.kl.only{background:var(--s1)}
+.kl.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 4px);
+      box-shadow:inset 0 0 0 1px var(--hatch)}
+.warnline{
+  margin-top:12px; padding:9px 11px; border-left:2px solid var(--s2);
+  background:color-mix(in srgb, var(--s2) 8%, transparent);
+  font-size:11.5px; line-height:1.7; color:var(--ink2);
+}
+.warnline b{color:var(--ink)}
+
+/* ---------- 应用栏：等宽的数字表 ---------- */
+.arow{padding:9px 0; border-bottom:1px solid var(--line)}
+.arow:last-child{border-bottom:0}
+.arow .t{display:flex; justify-content:space-between; gap:10px; font-size:12px}
+.arow .t .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.arow .t .vl{color:var(--ink); font-variant-numeric:tabular-nums; flex:none}
+.arow .t .vl em{font-style:normal; color:var(--muted); font-size:10.5px}
+.arow .bar{margin-top:5px; height:4px; width:100%; background:var(--line);
+           border-radius:1px; overflow:hidden}
+.arow .bar i{display:block; height:100%; background:var(--s1)}
+.arow .bar.h i{background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 4px);
+               box-shadow:inset 0 0 0 1px var(--hatch)}
+
+/* ---------- 底部一行说明 ---------- */
+.notes{
+  border-top:1px solid var(--line); background:var(--panel);
+  padding:11px 16px; font-size:11px; line-height:1.75; color:var(--muted);
+}
+.notes b{color:var(--ink2)}
+.notes code{border:1px solid var(--line); border-radius:2px; padding:0 4px; color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="brand">TYPE<span>STAT</span></span>
+  <span class="dim">2026-09-23 周三</span>
+  <span class="dim" id="span">16:03 – 20:11</span>
+  <span class="sp"></span>
+  <div class="seg" id="metric">
+    <button data-m="key" aria-pressed="true">按键</button>
+    <button data-m="char" aria-pressed="false">字数</button>
+  </div>
+  <span class="st"><i></i>钩子运行中</span>
+  <button class="tog" id="theme">浅色</button>
+</div>
+
+<!-- KPI 带：八个数，一行读完 -->
+<div class="kpibar" id="kpibar"></div>
+
+<div class="main">
+  <div class="pane">
+    <div class="ph">
+      <div>
+        <h2>每小时输入</h2>
+        <p id="chartnote">按小时统计 · 下面那条细带标出这一小时的数能不能信</p>
+      </div>
+    </div>
+    <div class="pb">
+      <div id="chart"></div>
+      <div class="klrow">
+        <span><i class="kl only"></i>有精确字数</span>
+        <span><i class="kl h"></i>只有按键数</span>
+        <span class="dim" id="grannote"></span>
+      </div>
+      <div class="warnline" id="warn">
+        <b>16 / 19 / 20 时只有按键数。</b>那三个小时你在打字，但我们拿不到字数——
+        图上不给它们画 0，因为 0 的意思是「一个字都没打」，而事实是「不知道」。
+      </div>
+    </div>
+  </div>
+
+  <div class="pane">
+    <div class="ph"><div><h2>在哪儿写的</h2><p>按按键数排序 · 只有装了适配器的应用拿得到字数</p></div></div>
+    <div class="pb" id="applist" style="justify-content:flex-start"></div>
+  </div>
+</div>
+
+<div class="notes">
+  设计稿 C · 真实数据（2026-09-23）。
+  <b>这一版是三个方案里唯一不需要滚动的</b>：它假设你打开它只是为了扫一眼，
+  扫完就关掉，所以把八个数排成一条带、图放左边、应用放右边，一屏看完。
+  代价是所有东西都很小——如果你更常是「打开来读一会儿」，A 或 B 更合适。
+</div>
+
+<script>
+const HOURS = [
+  { h:16, ki:2307, ci:0,    hc:false, kd:73  },
+  { h:17, ki:2109, ci:7415, hc:true,  kd:146 },
+  { h:19, ki:200,  ci:0,    hc:false, kd:11  },
+  { h:20, ki:222,  ci:0,    hc:false, kd:10  },
+];
+const APPS = [
+  { name:"wps.exe",             ki:3340, hc:true  },
+  { name:"WindowsTerminal.exe", ki:1432, hc:false },
+  { name:"Weixin.exe",          ki:57,   hc:false },
+  { name:"msedge.exe",          ki:7,    hc:false },
+  { name:"哔哩哔哩.exe",          ki:2,    hc:false },
+];
+const KEY = { input:4838, del:240, other:209, net:4598, session:111, active:82, longest:62, speed:58.2, cover:69 };
+const CHR = { input:7415, del:118, speed:494.3 };
+
+let metric = "key";
+const fmt = n => n.toLocaleString("zh-CN");
+const hm = m => m < 60 ? m + "m" : Math.floor(m/60) + "h" + (m%60 ? (m%60) + "m" : "");
+const byHour = h => HOURS.find(x => x.h === h) || { h, ki:0, ci:0, hc:false, kd:0 };
+
+/* ---------- KPI 带 ---------- */
+function kpibar() {
+  const p = metric === "char";
+  const rows = [
+    { k:"净输入",   v: fmt(p ? CHR.input - CHR.del : KEY.net), s: p ? "敲入 − 删掉（字）" : "敲入 − 删掉（键）" },
+    { k:"敲入",     v: fmt(p ? CHR.input : KEY.input), s: p ? "仅含 17 时" : "全部应用" },
+    { k:"删掉",     v: fmt(p ? CHR.del : KEY.del),     s: p ? "仅含 17 时" : "Backspace / Del" },
+    { k:"删除率",   v: ((p ? CHR.del/CHR.input : KEY.del/KEY.input)*100).toFixed(1), u:"%" , s:"删掉 ÷ 敲入" },
+    { k:"写作时间", v: "1", u:"h51m", s: "间隔 ≤ 5 分钟算一段" },
+    { k:"真正在敲", v: String(KEY.active), u:"分", s: "有按键的分钟数" },
+    { k:"速度",     v: (p ? CHR.speed : KEY.speed).toFixed(1), u: p ? "字/分" : "键/分",
+      s: p ? "÷ 有字数的 15 分" : "÷ 有输入的 82 分" },
+    { k:"字数覆盖", v: String(KEY.cover), u:"%", s: "有字数的按键占比" },
+  ];
+  document.getElementById("kpibar").innerHTML = rows.map(r => `
+    <div class="kpi">
+      <div class="k">${r.k}</div>
+      <div class="v">${r.v}${r.u ? `<small>${r.u}</small>` : ""}</div>
+      <div class="s">${r.s}</div>
+    </div>`).join("");
+}
+
+/* ---------- 图 ---------- */
+const W = 900, H = 300, PL = 52, PR = 10, PT = 12, PB = 68;
+const IW = W - PL - PR, IH = H - PT - PB;
+const slot = IW / 24;
+const xAt = h => PL + (h + .5) * slot;
+const base = PT + IH;
+
+function chart() {
+  const p = metric === "char";
+  const max = p ? 8000 : 2500;
+  const val = h => { const q = byHour(h); return p ? (q.hc ? q.ci : null) : q.ki; };
+  const yAt = v => base - (v / max) * IH;
+
+  const pts = [];
+  for (let h = 0; h < 24; h++) { const v = val(h); if (v !== null) pts.push([xAt(h), yAt(v)]); }
+
+  // 水平网格 + y 轴刻度：技术图要有刻度才读得出量级
+  let grid = "", ytick = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, y = yAt(v);
+    grid += `<line x1="${PL}" y1="${y}" x2="${W-PR}" y2="${y}" stroke="var(--line)" stroke-width="1"/>`;
+    ytick += `<text x="${PL-7}" y="${y+3.5}" text-anchor="end" font-size="10"
+               fill="var(--muted)" font-family="var(--mono)">${v >= 1000 ? (v/1000).toFixed(v%1000?1:0)+"k" : v}</text>`;
+  }
+  // x 轴刻度：每 4 小时，带竖线
+  let xtick = "";
+  for (let h = 0; h < 24; h += 4) {
+    xtick += `<line x1="${xAt(h)}" y1="${base}" x2="${xAt(h)}" y2="${base+5}"
+               stroke="var(--line2)" stroke-width="1"/>
+              <text x="${xAt(h)}" y="${base+38}" text-anchor="middle" font-size="10"
+               fill="var(--muted)" font-family="var(--mono)">${String(h).padStart(2,"0")}</text>`;
+  }
+
+  let qual = "";
+  for (let h = 0; h < 24; h++) {
+    const q = byHour(h);
+    if (q.ki === 0) continue;
+    qual += `<rect x="${PL + h*slot + 1.5}" y="${base + 12}" width="${slot - 3}" height="5"
+              fill="${q.hc ? "var(--s1)" : "url(#h)"}"/>`;
+  }
+
+  let d = "";
+  if (pts.length) {
+    d = `M ${pts[0][0]} ${pts[0][1]}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0,y0] = pts[i], [x1,y1] = pts[i+1], mx = (x0+x1)/2;
+      d += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+    }
+  }
+  const area = pts.length ? d + ` L ${pts[pts.length-1][0]} ${base} L ${pts[0][0]} ${base} Z` : "";
+
+  document.getElementById("chart").innerHTML = `
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="今天每小时的输入">
+    <defs>
+      <pattern id="h" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="4" height="4" fill="transparent"/>
+        <line x1="0" y1="0" x2="0" y2="4" stroke="var(--hatch)" stroke-width="2"/>
+      </pattern>
+      <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--s1)" stop-opacity=".3"/>
+        <stop offset="100%" stop-color="var(--s1)" stop-opacity=".02"/>
+      </linearGradient>
+    </defs>
+    ${grid}
+    <line x1="${PL}" y1="${base}" x2="${W-PR}" y2="${base}" stroke="var(--line2)" stroke-width="1"/>
+    ${ytick}${xtick}
+    ${area ? `<path d="${area}" fill="url(#g)"/>` : ""}
+    ${pts.length ? `<path d="${d}" fill="none" stroke="var(--s1)" stroke-width="2"/>` : ""}
+    ${pts.map(([x,y]) => `<circle cx="${x}" cy="${y}" r="3" fill="var(--bg)"
+        stroke="var(--s1)" stroke-width="1.8"/>`).join("")}
+    ${qual}
+  </svg>`;
+}
+
+function apply() {
+  const p = metric === "char";
+  document.querySelectorAll("#metric button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.m === metric)));
+  document.getElementById("chartnote").innerHTML = p
+    ? "按小时统计 · <b>今天只有 17 时拿得到字数</b>"
+    : "按小时统计 · 下面那条细带标出这一小时的数能不能信";
+  document.getElementById("grannote").textContent = p ? "细带刻度：有空隙 = 量不到" : "";
+  document.getElementById("warn").innerHTML = p
+    ? `<b>折线只剩一个点。</b>其余时段不是「没打字」，是没有精确字数——
+       换成「按键」口径能看到完整的一天。这就是为什么两个口径必须能随时切。`
+    : `<b>16 / 19 / 20 时只有按键数。</b>那三个小时你在打字，但我们拿不到字数——
+       图上不给它们画 0，因为 0 的意思是「一个字都没打」，而事实是「不知道」。`;
+  document.getElementById("span").textContent = "16:03 – 20:11";
+  kpibar(); chart();
+}
+
+document.querySelectorAll("#metric button").forEach(b =>
+  b.addEventListener("click", () => { metric = b.dataset.m; apply(); }));
+document.getElementById("theme").addEventListener("click", () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+  document.getElementById("theme").textContent = r.dataset.theme === "dark" ? "浅色" : "深色";
+  chart();
+});
+
+const max = Math.max(...APPS.map(a => a.ki));
+document.getElementById("applist").innerHTML = APPS.map(a => `
+  <div class="arow">
+    <div class="t">
+      <span class="nm" title="${a.name}">${a.name}</span>
+      <span class="vl">${fmt(a.ki)}${a.hc ? "" : " <em>无字数</em>"}</span>
+    </div>
+    <div class="bar${a.hc ? "" : " h"}"><i style="width:${Math.max(a.ki/max*100, 1.5)}%"></i></div>
+  </div>`).join("");
+
+apply();
+</script>
+</body>
+</html>

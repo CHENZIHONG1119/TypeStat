@@ -1,0 +1,1074 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TypeStat · 编辑台（全功能分页稿）</title>
+<style>
+/* B 方案，全功能版。
+   两条硬规矩：
+   1. 原来有的功能一个都不能少（见页面底部对照表）。
+   2. 一页只讲一件事——所以把原来挤在「今日」一页里的时间线、时长、应用分布
+      拆成了各自的页。宁可多几次点击，也不要一页里站着四个图表。 */
+:root{
+  color-scheme:light;
+  --paper:#faf8f4;
+  --ink:#191713; --ink2:#5a554c; --muted:#948d80;
+  --rule:#e6e1d7;
+  --s1:#2a78d6; --s2:#eb6834;
+  --hatch:rgba(25,23,19,.16);
+  /* 质量带的「有精确字数」格。刻意用中性灰而不是主题蓝——
+     用蓝的话，14 天连着画下来就成了一条实心蓝条，读起来像第三条数据线。
+     它只是注释，得待在图层的后面。 */
+  --band:rgba(25,23,19,.11);
+  --serif:Georgia,"Songti SC","Source Han Serif SC",serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"Courier New",monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --paper:#121110;
+  --ink:#f7f4ee; --ink2:#b8b2a6; --muted:#8a8478;
+  --rule:#2a2724;
+  --s1:#5598e7; --s2:#d95926;
+  --hatch:rgba(247,244,238,.2);
+  --band:rgba(247,244,238,.14);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--paper); color:var(--ink);
+  font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- 顶栏：品牌 + 文字导航 + 口径 + 主题 ---------- */
+.top{
+  display:flex; align-items:center; gap:22px; flex-wrap:wrap;
+  padding:16px 40px; border-bottom:1px solid var(--rule);
+  position:sticky; top:0; background:var(--paper); z-index:5;
+}
+.brand{font-size:12.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted)}
+.nav{display:flex; gap:2px; flex-wrap:wrap}
+.nav a{
+  text-decoration:none; color:var(--muted); font-size:13px;
+  padding:4px 9px; border-radius:6px;
+}
+.nav a:hover{color:var(--ink)}
+.nav a[aria-current=page]{color:var(--ink); background:rgba(42,120,214,.09)}
+.sp{flex:1; min-width:20px}
+.seg{display:inline-flex; gap:2px}
+.seg button{
+  appearance:none; border:0; background:none; color:var(--muted);
+  font:inherit; font-size:12.5px; padding:4px 10px; border-radius:6px; cursor:pointer;
+}
+.seg button[aria-pressed=true]{background:var(--s1); color:#fff}
+.tog{appearance:none;border:0;background:none;color:var(--muted);font:inherit;
+     font-size:12.5px;cursor:pointer;padding:4px 8px;border-radius:6px}
+.tog:hover{color:var(--ink)}
+
+/* ---------- 正文 ---------- */
+.page{max-width:820px; margin:0 auto; padding:52px 40px 90px}
+.page > section{display:none}
+.page > section.on{display:block}
+
+.eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase;
+         color:var(--muted); margin:0 0 26px}
+
+.dateline{font-size:13px; color:var(--muted); letter-spacing:.04em; margin-bottom:30px}
+.claim{font-size:23px; line-height:1.5; color:var(--ink2); margin:0 0 4px}
+.hero{font-size:62px; line-height:1.15; letter-spacing:-.02em; margin:0 0 26px; font-weight:400}
+.hero em{font-family:var(--serif); font-style:normal; font-size:1.14em; letter-spacing:-.01em}
+.hero .u{font-size:26px; color:var(--ink2); margin:0 8px 0 4px}
+
+h2.sec{font-size:13px; letter-spacing:.1em; text-transform:uppercase;
+       color:var(--muted); font-weight:600; margin:0 0 6px}
+p.sub{font-size:12.5px; color:var(--muted); margin:0 0 24px}
+.lede{font-size:15.5px; line-height:1.9; color:var(--ink2); margin:0 0 6px}
+.lede b{color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums}
+
+/* ---------- 图：没有框，只有基线和曲线 ---------- */
+.plot{margin:40px 0 8px}
+.plot svg{display:block; width:100%; height:auto}
+.axisx{display:flex; justify-content:space-between; font-size:11.5px;
+       color:var(--muted); margin-top:10px; padding-top:9px; border-top:1px solid var(--rule)}
+.keyline{display:flex; gap:22px; font-size:12.5px; color:var(--ink2); margin-top:14px; flex-wrap:wrap}
+.keyline span{display:inline-flex; align-items:center; gap:7px}
+.kl{width:20px; height:6px; border-radius:2px; display:inline-block}
+.kl.s1{background:var(--s1)}
+.kl.s2{background:var(--s2)}
+.kl.b{background:var(--band); box-shadow:inset 0 0 0 1px rgba(25,23,19,.07)}
+.kl.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 5px);
+      box-shadow:inset 0 0 0 1px var(--hatch)}
+.caption{font-size:12.5px; line-height:1.85; color:var(--muted); margin:16px 0 0}
+.caption b{color:var(--ink2)}
+
+/* ---------- 细账 ---------- */
+.ledger{display:grid; grid-template-columns:repeat(4,1fr);
+        border-top:1px solid var(--rule); margin-top:48px; padding-top:26px}
+.ledger div{padding-right:20px}
+.ledger .k{font-size:12px; color:var(--muted); margin-bottom:7px}
+.ledger .v{font-size:23px; font-weight:600; letter-spacing:-.01em; font-variant-numeric:tabular-nums}
+.ledger .v small{font-size:12.5px; font-weight:400; color:var(--muted); letter-spacing:0}
+
+/* ---------- 应用条 ---------- */
+.wa{display:grid; grid-template-columns:1fr 200px 108px; align-items:center;
+    gap:16px; padding:12px 0; border-bottom:1px solid var(--rule)}
+.wa:last-child{border-bottom:0}
+.wa .n{font-size:14.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.wa .bar{height:4px; min-width:7px; border-radius:2px; background:var(--s1); opacity:.85}
+.wa .bar.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 3px,transparent 3px 7px);
+           box-shadow:inset 0 0 0 1px var(--hatch); opacity:1; min-width:16px}
+.wa .v{text-align:right; font-size:13px; color:var(--ink2); font-variant-numeric:tabular-nums}
+.wa .v em{font-style:normal; color:var(--muted); font-size:12px}
+
+/* ---------- 表 ---------- */
+table.t{width:100%; border-collapse:collapse; font-size:13.5px}
+table.t th{
+  text-align:right; font-weight:500; font-size:11.5px; letter-spacing:.05em;
+  color:var(--muted); padding:0 0 10px; border-bottom:1px solid var(--rule);
+}
+table.t th:first-child{text-align:left}
+table.t td{
+  text-align:right; padding:11px 0; border-bottom:1px solid var(--rule);
+  font-variant-numeric:tabular-nums; color:var(--ink2);
+}
+table.t td:first-child{text-align:left; color:var(--ink); font-variant-numeric:normal}
+table.t tr:last-child td{border-bottom:0}
+.tag{display:inline-block; font-size:11px; padding:1px 7px; border-radius:99px;
+     border:1px solid var(--rule); color:var(--muted); margin-left:9px; vertical-align:1px}
+.tag.precise{color:var(--s1); border-color:rgba(42,120,214,.35)}
+
+/* ---------- 热力图 ---------- */
+.heat{display:grid; gap:2px; margin-top:8px}
+.hcell{aspect-ratio:1/1; border-radius:2px; background:var(--rule)}
+.hlabels{display:grid; grid-template-columns:repeat(24,1fr); gap:2px;
+         font-size:9.5px; color:var(--muted); margin-top:7px; text-align:center}
+.hdcol{display:grid; gap:2px; font-size:11px; color:var(--muted); align-items:center}
+.hrow{display:grid; grid-template-columns:64px 1fr; gap:12px; align-items:center}
+.hrow + .hrow{margin-top:2px}
+.hscale{display:flex; align-items:center; gap:9px; font-size:11.5px; color:var(--muted); margin-top:20px}
+.hscale i{display:block; width:15px; height:9px; border-radius:2px}
+.kbtbtn{appearance:none; border:0; background:none; color:var(--muted); font:inherit;
+        font-size:11.5px; padding:2px 8px; border-radius:5px; cursor:pointer}
+.kbtbtn[aria-pressed=true]{background:var(--s1); color:#fff}
+
+/* ---------- 键盘 ---------- */
+.kbwrap{margin-top:6px}
+.kb{display:block; width:100%; height:auto}
+.kb rect{transition:fill .2s}
+.off{margin-top:26px; border-top:1px solid var(--rule); padding-top:18px}
+.off .row{display:grid; grid-template-columns:1fr 70px; padding:7px 0; font-size:13.5px;
+          max-width:420px}
+.off .row span:last-child{text-align:right; color:var(--ink2); font-variant-numeric:tabular-nums}
+
+/* ---------- 设置页的各种条目 ---------- */
+.item{padding:18px 0; border-bottom:1px solid var(--rule)}
+.item:last-child{border-bottom:0}
+.item .h{display:flex; align-items:center; gap:10px; font-size:14.5px; margin-bottom:6px}
+.item .d{font-size:13px; color:var(--ink2); line-height:1.85; max-width:64em}
+.item .d b{color:var(--ink)}
+.item .d code{font-family:var(--mono); font-size:12px; background:rgba(25,23,19,.05);
+              padding:1px 5px; border-radius:4px}
+:root[data-theme=dark] .item .d code{background:rgba(247,244,238,.08)}
+.dot{width:8px; height:8px; border-radius:99px; background:var(--s1); flex:none}
+.dot.bad{background:var(--s2)}
+.btn{appearance:none; border:1px solid var(--rule); background:none; color:var(--ink);
+     font:inherit; font-size:13px; padding:6px 13px; border-radius:8px; cursor:pointer}
+.btn:hover{border-color:var(--s1); color:var(--s1)}
+.steps{margin:8px 0 0; padding-left:20px; font-size:13px; color:var(--ink2); line-height:2}
+.token{font-family:var(--mono); font-size:12.5px; letter-spacing:.04em}
+
+.foot{margin-top:52px; font-size:12.5px; line-height:1.95; color:var(--muted);
+      border-top:1px solid var(--rule); padding-top:22px}
+.foot b{color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <span class="brand">TypeStat</span>
+  <nav class="nav" id="nav"></nav>
+  <span class="sp"></span>
+  <div class="seg" id="metric">
+    <button data-m="key" aria-pressed="true">按键</button>
+    <button data-m="char" aria-pressed="false">字数</button>
+  </div>
+  <button class="tog" id="theme">深色</button>
+</div>
+
+<div class="page" id="pages"></div>
+
+<script>
+/* =========================================================================
+   数据
+   —— 今天（2026-09-23）是**真实值**，从 typestat.db 里读出来的。
+      其余 13 天是为看布局而生成的确定性模拟数据（种子固定，刷新不变），
+      并且假设那些天适配器已经在跑——否则整份稿子只能看到「只有按键数」这一种样子。
+   ========================================================================= */
+const TODAY = {
+  iso:"2026-09-23", today:true,
+  hours:[
+    { h:16, ki:2307, ci:0,    hc:false, kd:73  },
+    { h:17, ki:2109, ci:7415, hc:true,  kd:146 },
+    { h:19, ki:200,  ci:0,    hc:false, kd:11  },
+    { h:20, ki:222,  ci:0,    hc:false, kd:10  },
+  ],
+  ki:4838, kd:240, ko:209, ci:7415, cd:118,
+  session:111, active:82, longest:62, breaks:2, preciseMin:15,
+  /* kd = 删除按键，cd = 删除字数。两者不是同一个数、也不成固定比例，
+     所以分开存——乘一个系数去凑的话，明细表里就会出现一个对不上的数字。 */
+  apps:[
+    { name:"wps.exe",             ki:3340, ci:7415, kd:96,  cd:118, src:"plugin" },
+    { name:"WindowsTerminal.exe", ki:1432, ci:null, kd:132, cd:null, src:null },
+    { name:"Weixin.exe",          ki:57,   ci:null, kd:6,   cd:null, src:null },
+    { name:"msedge.exe",          ki:7,    ci:null, kd:4,   cd:null, src:null },
+    { name:"哔哩哔哩.exe",         ki:2,    ci:null, kd:2,   cd:null, src:null },
+  ],
+};
+
+/* 近 7 天真实键频（vk → 次数，总计 4841）。键位热力图用它上色。 */
+const VK_COUNT = {
+  73:512, 32:470, 78:448, 65:397, 72:297, 69:292, 71:254, 85:249, 8:221, 79:166,
+  90:148, 83:126, 68:118, 74:99, 89:80, 70:77, 76:65, 88:65, 13:62, 81:60,
+  67:53, 66:50, 77:47, 87:45, 188:42, 82:37, 84:37, 220:30, 86:26, 162:23, 80:21, 160:10,
+};
+/* 60% 布局装不下的键（方向键等），单独列。 */
+const OFF_KEYS = [
+  { name:"↓ 下", n:93 }, { name:"→ 右", n:40 }, { name:"← 左", n:38 },
+];
+/* 近 7 天落在布局图之外的按键总数。布局图上的 4,627 + 这里的 214 = 那个 4,841。
+   方向键 171 次能报出名字，剩下 43 次是 F 区/多媒体这类零星按键。 */
+const OFF_TOTAL_7D = 214;
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+/* 按分钟造一天：先造「哪些分钟在敲」，再由它推出会话时长 / 活跃分钟数，
+   最后把按键摊到这些分钟上。这样时长和键数是同源的，对得上。 */
+function mkMinuteDay(seed, scale){
+  const r = mulberry32(seed);
+  const m = new Uint8Array(1440);
+  const n = 1 + Math.floor(r()*3);
+  let t = 9*60 + Math.floor(r()*200);
+  for (let i=0;i<n;i++){
+    const len = Math.round((22 + r()*80) * scale);
+    for (let k=0;k<len;k++){
+      if (r() < .16) t += 1 + Math.floor(r()*4);      // 打字中间的小停顿，不断段
+      if (t >= 1440) break;
+      m[t] = 1; t++;
+    }
+    t += 7 + Math.floor(r()*45);                       // 离座，断段
+    if (t >= 1439) break;
+  }
+  return { m, r };
+}
+
+/* 会话时长 = 相邻输入间隔 ≤5 分钟的段，段长（含空隙）求和；
+   活跃分钟数 = 有按键的分钟数。前者恒 ≥ 后者。 */
+function durationOf(m){
+  let active=0, longest=0, segs=[];
+  let s=-1, prev=-1;
+  for (let t=0;t<1440;t++){
+    if (!m[t]) continue;
+    active++;
+    if (s < 0) s = t;
+    else if (t - prev > 5) { segs.push([s,prev]); s = t; }
+    prev = t;
+  }
+  if (s >= 0) segs.push([s,prev]);
+  let total = 0;
+  for (const [a,b] of segs){ const L = b-a+1; total += L; if (L>longest) longest = L; }
+  return { active, session:total, longest, breaks:Math.max(0, segs.length-1) };
+}
+
+const DAYS = (() => {
+  const out = [];
+  const base = new Date(2026, 8, 10);                   // 14 天：9/10 – 9/23
+  for (let i=0;i<14;i++){
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate()+i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    if (iso === "2026-09-23") { out.push(TODAY); continue; }
+
+    const we = d.getDay()===0 || d.getDay()===6;
+    const seed = 20260000 + i*7919;
+    const { m, r } = mkMinuteDay(seed, we ? .5 : 1);
+    if (!m.some(v=>v)) { out.push({ iso, today:false, hours:[], ki:0, kd:0, ko:0,
+        ci:0, cd:0, session:0, active:0, longest:0, breaks:0, preciseMin:0, apps:[] }); continue; }
+
+    const byH = {}; let ki=0, kd=0, ko=0;
+    for (let t=0;t<1440;t++){
+      if (!m[t]) continue;
+      const n = Math.round((7 + r()*62) * (we ? .55 : 1));
+      ki += n;
+      const h = Math.floor(t/60);
+      (byH[h] = byH[h] || { h, ki:0, ci:0, kd:0, hc:true }).ki += n;
+    }
+    const hours = Object.values(byH).sort((a,b)=>a.h-b.h);
+    for (const x of hours){
+      x.ci = Math.round(x.ki * (.75 + r()*.95));
+      x.kd = Math.round(x.ki * (.025 + r()*.05));
+      kd += x.kd;
+    }
+    ko = Math.round(ki * (.04 + r()*.03));
+    const ci = hours.reduce((s,x)=>s+x.ci,0);
+    out.push({ iso, today:false, hours, ki, kd, ko, ci, cd:Math.round(kd*.5),
+               ...durationOf(m), preciseMin: hours.filter(x=>x.ci>0).length });
+  }
+  return out;
+})();
+
+/* =========================================================================
+   状态
+   ========================================================================= */
+let metric = "key";                       // 'key' 按键 / 'char' 精确字数
+let dark = false;
+const fmt = n => (n === null || n === undefined) ? "—" : n.toLocaleString("zh-CN");
+const WD = ["日","一","二","三","四","五","六"];
+const dayOf = iso => new Date(iso + "T00:00:00");
+const label = iso => `${dayOf(iso).getMonth()+1} 月 ${dayOf(iso).getDate()} 日 · 星期${WD[dayOf(iso).getDay()]}`;
+const shortLabel = iso => `${dayOf(iso).getMonth()+1}/${dayOf(iso).getDate()}`;
+const isChar = () => metric === "char";
+
+/* 口径相关的取值：同一个位子在两种口径下各是多少。
+   注意 ci 为 null 表示「没有适配器上报过」，不是 0——所以不能画成 0。 */
+function inputOf(d){ return isChar() ? d.ci : d.ki; }
+function deleteOf(d){ return isChar() ? d.cd : d.kd; }
+function hourInput(h){ return isChar() ? (h.hc ? h.ci : null) : h.ki; }
+
+/* 覆盖率：有精确字数的按键 ÷ 全部按键。写出来，不然读图的人不知道这个数的地盘有多大。 */
+function coverage(d){
+  if (!d.ki) return 0;
+  const covered = d.hours.filter(h=>h.hc && h.ci>0).reduce((s,h)=>s+h.ki,0);
+  return Math.round(covered / d.ki * 100);
+}
+
+/* =========================================================================
+   绘图的公共件
+   ========================================================================= */
+const HATCH = `<pattern id="hx" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+  <rect width="5" height="5" fill="transparent"/>
+  <line x1="0" y1="0" x2="0" y2="5" stroke="var(--hatch)" stroke-width="2.4"/></pattern>`;
+
+const GRAD = `<linearGradient id="gr" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0%" stop-color="var(--s1)" stop-opacity=".16"/>
+  <stop offset="100%" stop-color="var(--s1)" stop-opacity="0"/></linearGradient>`;
+
+/* 平滑曲线穿过每一个真实点；点标记照留——曲线是插出来的，不是量出来的。 */
+function smoothPath(pts){
+  if (!pts.length) return "";
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i=0;i<pts.length-1;i++){
+    const [x0,y0]=pts[i], [x1,y1]=pts[i+1], mx=(x0+x1)/2;
+    d += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+  }
+  return d;
+}
+
+/* 质量带：基线下面那条细带。**它是注释不是数据**，所以放在数据区域之外，
+   不会被高高的面积盖住。实心 = 有精确字数，斜纹 = 只有按键数，空白 = 真没打字。 */
+function qualityBand(n, xEdge, slot, stateAt, y){
+  let s = "";
+  for (let i=0;i<n;i++){
+    const st = stateAt(i);
+    if (st === "none") continue;
+    s += `<rect x="${xEdge(i)+1.5}" y="${y}" width="${slot-3}" height="6" rx="2"
+            fill="${st === "exact" ? "var(--band)" : "url(#hx)"}"/>`;
+  }
+  return s;
+}
+
+/* =========================================================================
+   页面：今天
+   ========================================================================= */
+function pageToday(){
+  const d = TODAY;
+  const rest = d.session - d.active;
+  const speed = isChar() ? `${(d.ci/d.preciseMin).toFixed(1)} 字/分` : `${(d.ki/d.active).toFixed(1)} 键/分`;
+  const delRate = isChar()
+    ? (d.cd/d.ci*100).toFixed(1)
+    : (d.kd/d.ki*100).toFixed(1);
+  return `
+  <section id="today">
+    <p class="eyebrow">今天</p>
+    <div class="dateline">${label(d.iso)}</div>
+    <p class="claim">今天，你坐下来写了</p>
+    <h1 class="hero"><em>1</em><span class="u">小时</span><em>51</em><span class="u">分</span></h1>
+
+    <p class="lede">
+      其中 <b>${d.active} 分钟</b>真的在敲，剩下 <b>${rest} 分钟</b>在想。
+      最长一口气写了 <b>1 小时 2 分</b>，手速 <b>${speed}</b>。
+    </p>
+    <p class="lede">从 <b>16:03</b> 开始，到 <b>20:11</b> 停下。</p>
+
+    <div class="ledger">
+      <div><div class="k">${isChar() ? "敲入字数" : "敲入按键"}</div>
+           <div class="v">${fmt(inputOf(d))}</div></div>
+      <div><div class="k">${isChar() ? "删掉字数" : "删掉按键"}</div>
+           <div class="v">${fmt(deleteOf(d))}</div></div>
+      <div><div class="k">删除率</div><div class="v">${delRate}<small>%</small></div></div>
+      <div><div class="k">精确字数覆盖</div><div class="v">${coverage(d)}<small>%</small></div></div>
+    </div>
+
+    <p class="caption">
+      这一页只回答一句话：<b>今天你写了多久</b>。图上没有别的。
+      时长不分口径（切顶栏的开关它也不动）——「坐下来写」跟「敲了几个字」是两件事，
+      不该跟着一个字数的口径一起变。
+    </p>
+    ${isChar() ? `<p class="caption">
+      ⚠ 494 字/分这个数看着离谱，是因为今天 WPS 上报的字数虚高（旧量法留下的），
+      不是你真的打这么快。已记下，等重启 WPS 对完账再改计数逻辑。
+    </p>` : ""}
+  </section>`;
+}
+
+/* =========================================================================
+   页面：时段（一天的小时曲线）—— 一个页面就这一张图
+   ========================================================================= */
+function pageHours(){
+  const d = TODAY;
+  const precise = isChar();
+  const max = precise ? 8000 : 2500;
+
+  const W = 760, H = 212, PL = 0, PR = 0, PT = 20, PB = 26;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  const slot = IW / 24;
+  const xAt = h => PL + (h + .5) * slot;
+  const base = PT + IH;
+  const yAt = v => base - (v / max) * IH;
+
+  const pts = [];
+  for (let h=0;h<24;h++){
+    const v = hourInput(d.hours.find(x=>x.h===h) || { h, ki:0, ci:0, hc:false });
+    if (v !== null && v > 0) pts.push([xAt(h), yAt(v)]);
+  }
+  const path = smoothPath(pts);
+  const area = pts.length ? path + ` L ${pts[pts.length-1][0]} ${base} L ${pts[0][0]} ${base} Z` : "";
+  const band = qualityBand(24, h => PL + h*slot, slot,
+    h => { const p = d.hours.find(x=>x.h===h); return !p || !p.ki ? "none" : (p.hc && p.ci>0 ? "exact" : "keys"); },
+    base + 11);
+
+  const cells = d.hours.map(h => `
+    <div class="wa">
+      <div class="n">${h.h} 时</div>
+      <div class="bar${precise && !(h.hc && h.ci > 0) ? " h" : ""}"
+           style="width:${Math.max((hourInput(h)||0)/max*100, 0)}%"></div>
+      <div class="v">${fmt(hourInput(h))}${precise && !h.hc ? " <em>· 无字数</em>" : ""}</div>
+    </div>`).join("");
+
+  return `
+  <section id="hours">
+    <p class="eyebrow">时段 · 今天</p>
+    <h2 class="sec">每小时的输入量</h2>
+    <p class="sub">这天你只在这 4 个钟头里动过键盘</p>
+
+    <div class="plot">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="今天每小时的输入">
+        <defs>${HATCH}${GRAD}</defs>
+        <line x1="${PL}" y1="${base}" x2="${W-PR}" y2="${base}" stroke="var(--rule)"/>
+        ${area ? `<path d="${area}" fill="url(#gr)"/>` : ""}
+        ${path ? `<path d="${path}" fill="none" stroke="var(--s1)" stroke-width="2.5" stroke-linecap="round"/>` : ""}
+        ${pts.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="var(--paper)" stroke="var(--s1)" stroke-width="2"/>`).join("")}
+        ${band}
+      </svg>
+      <div class="axisx"><span>0 时</span><span>3</span><span>6</span><span>9</span>
+        <span>12</span><span>15</span><span>18</span><span>21</span><span>23 时</span></div>
+      <div class="keyline">
+        <span><i class="kl s1"></i>${precise ? "有精确字数" : "有按键数"}</span>
+        <span><i class="kl b"></i>那一小时有精确字数</span>
+        <span><i class="kl h"></i>只有按键数，字数量不到</span>
+      </div>
+      <p class="caption">
+        下面那条细带说明这个数是从哪儿来的——<b>斜纹处我们只知道你在敲键盘，不知道敲了几个字</b>。
+        斜纹里的空白是「真的没打字」，不是「数据缺失」；反过来，线在那些小时里
+        <b>不是断在 0，是画不出来</b>。
+      </p>
+    </div>
+
+    <div class="ledger">
+      <div><div class="k">有输入的时段</div><div class="v">4<small> 个</small></div></div>
+      <div><div class="k">最忙的一小时</div><div class="v">17<small> 时</small></div></div>
+      <div><div class="k">那一小时</div><div class="v">${fmt(2109)}<small> 键</small></div></div>
+      <div><div class="k">覆盖全天</div><div class="v">${coverage(TODAY)}<small>%</small></div></div>
+    </div>
+
+    <h2 class="sec" style="margin-top:46px">逐时段</h2>
+    <p class="sub">图上只有「在打字的钟头」，这里把每一格都写出来</p>
+    ${cells}
+  </section>`;
+}
+
+/* =========================================================================
+   页面：时长（写作时间）—— 会话时长 vs 活跃分钟数，两条线同一根轴
+   ========================================================================= */
+function pageDuration(){
+  const W = 760, H = 212, PL = 0, PR = 0, PT = 20, PB = 26;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  const slot = IW / DAYS.length;
+  const xAt = i => PL + (i + .5) * slot;
+  const base = PT + IH;
+  const max = Math.max(...DAYS.map(d=>d.session), 60) * 1.15;
+  const yAt = v => base - (v/max) * IH;
+
+  const mk = key => {
+    const pts = DAYS.map((d,i)=>[xAt(i), yAt(d[key])]);
+    const path = smoothPath(pts);
+    return { path, area: path + ` L ${pts[pts.length-1][0]} ${base} L ${pts[0][0]} ${base} Z`, pts };
+  };
+  const a = mk("session"), b = mk("active");
+
+  const tot = DAYS.filter(d=>!d.today).reduce((s,d)=>[s[0]+d.session, s[1]+d.active], [0,0]);
+  const avgS = Math.round(tot[0] / DAYS.filter(d=>!d.today).length);
+  const avgA = Math.round(tot[1] / DAYS.filter(d=>!d.today).length);
+  const best = DAYS.reduce((m,d)=>d.active > m.active ? d : m, DAYS[0]);
+
+  return `
+  <section id="duration">
+    <p class="eyebrow">时长 · 近 14 天</p>
+    <h2 class="sec">写作时间</h2>
+    <p class="sub">「坐下来多久」和「真正在敲多久」是两回事，都画出来</p>
+
+    <div class="plot">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="近 14 天的写作时间">
+        <defs>${GRAD}</defs>
+        <line x1="${PL}" y1="${base}" x2="${W-PR}" y2="${base}" stroke="var(--rule)"/>
+        <path d="${a.area}" fill="url(#gr)"/>
+        <path d="${b.path}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linecap="round"/>
+        <path d="${a.path}" fill="none" stroke="var(--s1)" stroke-width="2.5" stroke-linecap="round"/>
+        ${b.pts.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.6" fill="var(--paper)" stroke="var(--s2)" stroke-width="1.6"/>`).join("")}
+        ${a.pts.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.2" fill="var(--paper)" stroke="var(--s1)" stroke-width="2"/>`).join("")}
+      </svg>
+      <div class="axisx">${DAYS.map((d,i)=>`<span>${shortLabel(d.iso)}</span>`).join("")}</div>
+      <div class="keyline">
+        <span><i class="kl s1"></i>坐下来的时间（含中间发呆的空隙）</span>
+        <span><i class="kl s2"></i>真正在敲的分钟数</span>
+      </div>
+      <p class="caption">
+        两条线一根轴，单位都是<b>分钟</b>，所以比得出高低。中间那段差值就是「坐着没敲」——
+        它不该被当成偷懒，写作本来就有想的时间。
+      </p>
+    </div>
+
+    <div class="ledger">
+      <div><div class="k">日均坐下</div><div class="v">${avgS}<small> 分</small></div></div>
+      <div><div class="k">日均真敲</div><div class="v">${avgA}<small> 分</small></div></div>
+      <div><div class="k">最长一口气（14 天）</div>
+           <div class="v">${Math.max(...DAYS.map(d=>d.longest))}<small> 分</small></div></div>
+      <div><div class="k">最猛的一天</div><div class="v">${shortLabel(best.iso)}</div></div>
+    </div>
+    <p class="caption">
+      今天的会话时长<b>不含口径开关的影响</b>——切上面的「字数 / 按键」，这条线不动。
+      它算的是「相邻两次输入间隔不超过 5 分钟就算同一段」，跟字符数没有关系。
+    </p>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：趋势（输入 vs 删除）
+   ========================================================================= */
+function pageTrends(){
+  const precise = isChar();
+  const W = 760, H = 220, PL = 0, PR = 0, PT = 22, PB = 26;
+  const IW = W - PL - PR, IH = H - PT - PB;
+  const slot = IW / DAYS.length;
+  const xAt = i => PL + (i + .5) * slot;
+  const base = PT + IH;
+  const max = Math.max(...DAYS.map(d=>inputOf(d)), 1) * 1.15;
+  const yAt = v => base - (v/max) * IH;
+
+  const mk = (f, color) => {
+    const pts = DAYS.map((d,i)=>[xAt(i), yAt(f(d))]);
+    const path = smoothPath(pts);
+    return { path, pts, color };
+  };
+  const inp = mk(inputOf, "var(--s1)");
+  const del = mk(deleteOf, "var(--s2)");
+  const band = qualityBand(DAYS.length, i => PL + i*slot, slot,
+    i => { const d = DAYS[i]; if (!d.ki) return "none";
+           return (d.hours.length && d.hours.every(h=>h.hc&&h.ci>0)) ? "exact" : (d.hours.some(h=>h.hc&&h.ci>0) ? "keys" : "keys"); },
+    base + 11);
+
+  const sumIn = DAYS.reduce((s,d)=>s+inputOf(d),0);
+  const sumDel = DAYS.reduce((s,d)=>s+deleteOf(d),0);
+
+  return `
+  <section id="trends">
+    <p class="eyebrow">趋势 · 近 14 天</p>
+    <h2 class="sec">${precise ? "输入与删除的字数" : "输入与删除的按键"}</h2>
+    <p class="sub">单位一致才有可比性——「字」和「键」永远不会出现在同一根轴上</p>
+
+    <div class="plot">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="近 14 天的输入与删除">
+        <defs>${GRAD}${HATCH}</defs>
+        <line x1="${PL}" y1="${base}" x2="${W-PR}" y2="${base}" stroke="var(--rule)"/>
+        <path d="${inp.path} L ${inp.pts[inp.pts.length-1][0]} ${base} L ${inp.pts[0][0]} ${base} Z" fill="url(#gr)"/>
+        <path d="${del.path}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linecap="round"/>
+        <path d="${inp.path}" fill="none" stroke="var(--s1)" stroke-width="2.5" stroke-linecap="round"/>
+        ${del.pts.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="2.6" fill="var(--paper)" stroke="${del.color}" stroke-width="1.6"/>`).join("")}
+        ${inp.pts.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.2" fill="var(--paper)" stroke="${inp.color}" stroke-width="2"/>`).join("")}
+        ${band}
+      </svg>
+      <div class="axisx">${DAYS.map(d=>`<span>${shortLabel(d.iso)}</span>`).join("")}</div>
+      <div class="keyline">
+        <span><i class="kl s1"></i>${precise ? "输入字数" : "输入按键"}</span>
+        <span><i class="kl s2"></i>${precise ? "删除字数" : "删除按键"}</span>
+        <span><i class="kl b"></i>那天有精确字数</span>
+        <span><i class="kl h"></i>那天的字数不全</span>
+      </div>
+      <p class="caption">
+        删除线一直贴在底部是正常的——<b>删除只有输入的百分之几</b>，
+        为了看清它的形状，两条线共用一根轴是必须付出的代价：
+        如果给删除单独一根轴，它看起来就会和输入一样高，那是骗人的。
+      </p>
+    </div>
+
+    <div class="ledger">
+      <div><div class="k">14 天合计输入</div><div class="v">${fmt(sumIn)}</div></div>
+      <div><div class="k">14 天合计删除</div><div class="v">${fmt(sumDel)}</div></div>
+      <div><div class="k">删除率</div><div class="v">${(sumDel/sumIn*100).toFixed(1)}<small>%</small></div></div>
+      <div><div class="k">平均值 / 天</div><div class="v">${fmt(Math.round(sumIn/14))}</div></div>
+    </div>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：热力（日期 × 小时）
+   ========================================================================= */
+function pageHeat(){
+  const max = Math.max(...DAYS.flatMap(d => d.hours.map(h=>h.ki)), 1);
+  // 最忙的钟点：24 个钟点各自把 14 天加起来，取最大的那个。
+  // 不写死——写死的话数据一换这句话就成了错的，而它看起来还像是对的。
+  let BUSIEST_HOUR = 0, best = -1;
+  for (let h=0;h<24;h++){
+    const s = DAYS.reduce((a,d)=>{ const p=d.hours.find(x=>x.h===h); return a + (p?p.ki:0); }, 0);
+    if (s > best){ best = s; BUSIEST_HOUR = h; }
+  }
+  const ramp = t => {
+    if (t <= 0) return "var(--rule)";
+    const a = dark ? [0x1a,0x22,0x2c] : [0xee,0xf4,0xfc];
+    const b = dark ? [0x55,0x98,0xe7] : [0x2a,0x78,0xd6];
+    const c = a.map((v,i)=>Math.round(v + (b[i]-v) * Math.pow(t, .6)));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  };
+  const rows = DAYS.map(d => {
+    const cells = [];
+    for (let h=0;h<24;h++){
+      const p = d.hours.find(x=>x.h===h);
+      const v = p ? p.ki : 0;
+      cells.push(`<i class="hcell" style="background:${ramp(v/max)}"
+        title="${shortLabel(d.iso)} ${h} 时 · ${v ? v + " 键" : "没打字"}"></i>`);
+    }
+    return `<div class="hrow">
+      <div class="hdcol" style="color:var(--muted)">${shortLabel(d.iso)}</div>
+      <div class="heat" style="grid-template-columns:repeat(24,1fr)">${cells.join("")}</div>
+    </div>`;
+  }).join("");
+
+  return `
+  <section id="heat">
+    <p class="eyebrow">热力 · 近 14 天</p>
+    <h2 class="sec">你都在什么时候打字</h2>
+    <p class="sub">一格是一小时 · 越深打得越多 · 空的格子是真的没打字</p>
+
+    <div style="margin-top:26px">${rows}</div>
+    <div class="hlabels" style="padding-left:76px">
+      ${Array.from({length:24},(_,h)=>`<span>${h%3===0?h:""}</span>`).join("")}
+    </div>
+
+    <div class="hscale">
+      <span>少</span>
+      ${[0,.2,.4,.6,.8,1].map(t=>`<i style="background:${ramp(t)}"></i>`).join("")}
+      <span>多</span>
+      <span style="margin-left:8px">最深 = ${fmt(max)} 键/时</span>
+    </div>
+
+    <p class="caption">
+      这张图只用<b>按键数</b>，不跟口径开关走——热力要的是每一格都能比，
+      而字数只在少数几格里量得到，混进来会让「深」变成两种意思。
+      空白的格子是<b>真的没打字</b>，不是「量不到」；这两件事在这个项目里必须分开。
+    </p>
+
+    <div class="ledger">
+      <div><div class="k">最忙的钟点</div>
+           <div class="v">${BUSIEST_HOUR}<small> 时</small></div></div>
+      <div><div class="k">数据天数</div><div class="v">14<small> 天</small></div></div>
+      <div><div class="k">有打字的小时</div><div class="v">${DAYS.reduce((s,d)=>s+d.hours.length,0)}<small> 格</small></div></div>
+      <div><div class="k">空白格</div><div class="v">${14*24 - DAYS.reduce((s,d)=>s+d.hours.length,0)}<small> 格</small></div></div>
+    </div>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：键位（60% 键盘热力图）
+   ========================================================================= */
+const KEY_ROWS = [
+  [["`",1,0xc0],["1",1,0x31],["2",1,0x32],["3",1,0x33],["4",1,0x34],["5",1,0x35],
+   ["6",1,0x36],["7",1,0x37],["8",1,0x38],["9",1,0x39],["0",1,0x30],["-",1,0xbd],
+   ["=",1,0xbb],["⌫",2,0x08]],
+  [["Tab",1.5,0x09],["Q",1,0x51],["W",1,0x57],["E",1,0x45],["R",1,0x52],["T",1,0x54],
+   ["Y",1,0x59],["U",1,0x55],["I",1,0x49],["O",1,0x4f],["P",1,0x50],["[",1,0xdb],
+   ["]",1,0xdd],["\\",1.5,0xdc]],
+  [["Caps",1.75,0x14],["A",1,0x41],["S",1,0x53],["D",1,0x44],["F",1,0x46],["G",1,0x47],
+   ["H",1,0x48],["J",1,0x4a],["K",1,0x4b],["L",1,0x4c],[";",1,0xba],["'",1,0xde],
+   ["⏎",2.25,0x0d]],
+  [["Shift",2.25,null],["Z",1,0x5a],["X",1,0x58],["C",1,0x43],["V",1,0x56],["B",1,0x42],
+   ["N",1,0x4e],["M",1,0x4d],[",",1,0xbc],[".",1,0xbe],["/",1,0xbf],["Shift",2.75,null]],
+  [["Ctrl",1.25,null],["Win",1.25,null],["Alt",1.25,null],["Space",6.25,0x20],
+   ["Alt",1.25,null],["Win",1.25,null],["Menu",1.25,0x5d],["Ctrl",1.25,null]],
+];
+
+let kbsqrt = true;      // 键位图的缩放：平方根 / 线性
+
+function pageKeys(){
+  const max = Math.max(...Object.values(VK_COUNT));
+  const totalAll = Object.values(VK_COUNT).reduce((a,b)=>a+b,0) || 1;
+  const unit = 760 / 15, GAP = 2, KH = unit * .9;
+  let y = 0, svg = "";
+  const norm = n => {
+    if (n <= 0 || max <= 0) return 0;
+    return kbsqrt ? Math.sqrt(n)/Math.sqrt(max) : n/max;
+  };
+  for (const row of KEY_ROWS){
+    let x = 0;
+    for (const [lab, w, vk] of row){
+      const n = vk === null ? 0 : (VK_COUNT[vk] || 0);
+      const t = norm(n);
+      const a = dark ? [0x22,0x21,0x1e] : [0xf1,0xee,0xe7];
+      const b = dark ? [0x55,0x98,0xe7] : [0x2a,0x78,0xd6];
+      const c = a.map((v,k)=>Math.round(v + (b[k]-v) * t));
+      const fill = n > 0 ? `rgb(${c[0]},${c[1]},${c[2]})` : "var(--rule)";
+      // 每个键都要有标签，哪怕是 0 次的。数字键整行没字的话，这张图看着像坏了，
+      // 而事实只是「这七天你没按过数字」——那也得让人看得见。
+      const ink = n === 0 ? "var(--muted)" : (t > .58 ? "#fff" : "var(--ink2)");
+      const fs = unit * (lab.length >= 4 ? .22 : lab.length === 3 ? .27 : .36);
+      svg += `<rect x="${x}" y="${y}" width="${w*unit-GAP}" height="${KH}" rx="5" fill="${fill}">
+        <title>${{"⌫":"退格","⏎":"回车","Tab":"Tab","Caps":"Caps Lock","Space":"空格","Menu":"菜单键"}[lab]||lab} · ${
+          n > 0 ? `${fmt(n)} 次 · 占 ${(n/totalAll*100).toFixed(1)}%` : "这段区间没按过"}</title></rect>`;
+      svg += `<text x="${x + (w*unit-GAP)/2}" y="${y + KH/2}" text-anchor="middle"
+        dominant-baseline="central" font-size="${fs}" fill="${ink}">${lab}</text>`;
+      x += w*unit;
+    }
+    y += KH + GAP;
+  }
+  const H = y - GAP;
+
+  const total = Object.values(VK_COUNT).reduce((a,b)=>a+b,0);
+  const off = OFF_KEYS.reduce((s,k)=>s+k.n, 0);
+
+  return `
+  <section id="keys">
+    <p class="eyebrow">键位 · 近 7 天</p>
+    <h2 class="sec">你按的是哪些键</h2>
+    <p class="sub">60% 布局 · 颜色按次数取平方根缩放，否则高低差两个数量级会糊成一片</p>
+
+    <div class="kbwrap">
+      <svg class="kb" viewBox="0 0 760 ${H}" role="img" aria-label="键盘热力图">${svg}</svg>
+    </div>
+
+    <div class="hscale">
+      <span>少</span>
+      ${[0,.25,.5,.75,1].map(t=>{
+        const a = dark?[0x22,0x21,0x1e]:[0xf1,0xee,0xe7], b = dark?[0x55,0x98,0xe7]:[0x2a,0x78,0xd6];
+        const c = a.map((v,j)=>Math.round(v+(b[j]-v)*t));
+        return `<i style="background:rgb(${c.join(",")})"></i>`;
+      }).join("")}
+      <span>多 · 最深 ${fmt(max)} 次</span>
+      <span style="flex:1"></span>
+      <span id="kbtoggle" style="display:inline-flex; gap:2px; align-items:center">
+        <span style="margin-right:6px">缩放</span>
+        <button class="kbtbtn" data-sqrt="1" aria-pressed="${kbsqrt}">平方根</button>
+        <button class="kbtbtn" data-sqrt="0" aria-pressed="${!kbsqrt}">线性</button>
+      </span>
+    </div>
+
+    <div class="off">
+      <h2 class="sec">图外的键</h2>
+      <p class="sub">60% 布局上本来就没有方向键、F 区和小键盘，但你会按——这些次数得报得出来</p>
+      ${OFF_KEYS.map(k=>`<div class="row"><span>${k.name}</span><span>${fmt(k.n)}</span></div>`).join("")}
+      <div class="row" style="color:var(--muted)"><span>其余图外按键（F 区、多媒体等）</span>
+        <span>${fmt(OFF_TOTAL_7D - off)}</span></div>
+    </div>
+
+    <p class="caption">
+      图表里数的是<b>每一次物理按下</b>：长按不重复计数，左右 Shift 分开算，
+      密码框里的按键不统计。近 7 天落在布局图上的键一共 ${fmt(total)} 次，
+      加上图外的 ${fmt(OFF_TOTAL_7D)} 次，正好是 ${fmt(total + OFF_TOTAL_7D)} ——
+      <b>图外那些键不会被丢掉，只是画不进这张 60% 布局里</b>。
+    </p>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：应用（排行）
+   ========================================================================= */
+function pageApps(){
+  const precise = isChar();
+  const list = TODAY.apps
+    .map(a => ({ ...a, v: precise ? a.ci : a.ki }))
+    .sort((a,b) => (b.v ?? -1) - (a.v ?? -1));
+  const max = Math.max(...list.map(a=>a.v ?? 0), 1);
+  const anyPrecise = TODAY.apps.some(a => a.ci > 0);
+  const excluded = TODAY.apps.filter(a => !a.ci).length;
+
+  return `
+  <section id="apps">
+    <p class="eyebrow">应用 · 今天</p>
+    <h2 class="sec">${precise ? "字数都写在哪儿了" : "按键都敲在哪儿了"}</h2>
+    <p class="sub">${precise
+      ? "只有装了适配器的应用才拿得到字数，其余的应用在字数口径下是隐形的"
+      : "按键数覆盖所有应用，所以它才是那张完整的图"}</p>
+
+    <div style="margin-top:26px">
+      ${list.map(a => `
+        <div class="wa">
+          <div class="n">${a.name}</div>
+          <div class="bar${precise && !a.ci ? " h" : ""}" style="width:${(a.v ?? 0)/max*100}%"></div>
+          <div class="v">${fmt(a.v)}${!a.ci && precise ? " <em>· 无字数</em>" : ""}</div>
+        </div>`).join("")}
+    </div>
+
+    <div class="keyline" style="margin-top:20px">
+      <span><i class="kl s1"></i>${precise ? "有精确字数（适配器上报）" : "输入按键数"}</span>
+      ${precise ? `<span><i class="kl h"></i>只有按键数，字数量不到</span>` : ""}
+    </div>
+
+    ${precise && anyPrecise ? `<p class="caption">
+      已排除 ${excluded} 个只有按键数的应用：${TODAY.apps.filter(a=>!a.ci).map(a=>a.name).join("、")}。
+      <b>排除不等于没写</b>——它们只是在字数口径下量不到，切到「按键」就能看见。
+    </p>` : ""}
+    <p class="caption">
+      判定一个应用「有没有精确字数」看的是<b>有没有适配器上报过</b>，不是「字数大于 0」。
+      一个装了适配器但今天没写字的应用，和另一个没适配器的应用，是两件事。
+    </p>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：明细（表）
+   ========================================================================= */
+function pageDetail(){
+  const precise = isChar();
+  const rows = TODAY.apps.map(a => `
+    <tr>
+      <td>${a.name}${a.src === "plugin"
+        ? `<span class="tag precise">精确（插件）</span>`
+        : `<span class="tag">仅按键</span>`}</td>
+      <td>${fmt(a.ki)}</td>
+      <td>${fmt(a.ci)}</td>
+      <td>${fmt(precise ? a.cd : a.kd)}</td>
+    </tr>`).join("");
+  const totKi = TODAY.apps.reduce((s,a)=>s+a.ki,0);
+  const totCi = TODAY.apps.reduce((s,a)=>s+(a.ci||0),0);
+  const totDel = TOTAL_DEL();
+  return `
+  <section id="detail">
+    <p class="eyebrow">明细 · 今天</p>
+    <h2 class="sec">分应用对账</h2>
+    <p class="sub">图上排不出名次的，这里都写着</p>
+
+    <table class="t" style="margin-top:26px">
+      <thead><tr>
+        <th>应用</th><th>输入按键</th>
+        <th>${precise ? "输入字数" : "输入字数"}</th>
+        <th>${precise ? "删除字数" : "删除按键"}</th>
+      </tr></thead>
+      <tbody>
+        ${rows}
+        <tr style="font-weight:600">
+          <td style="font-weight:600">合计</td>
+          <td style="color:var(--ink); font-weight:600">${fmt(totKi)}</td>
+          <td style="color:var(--ink); font-weight:600">${fmt(totCi)}</td>
+          <td style="color:var(--ink); font-weight:600">${fmt(totDel)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="caption">
+      两列数的<b>地盘不一样</b>：输入按键覆盖全部 ${TODAY.apps.length} 个应用，
+      输入字数只覆盖有适配器的那 1 个。横着比这两列没有意义，竖着看各自的行才对。
+    </p>
+    <p class="caption">
+      WPS 今天的字数（7,415）明显虚高——那是旧量法（<code>Range.Text.length</code> 给的是覆盖区域长度，
+      不是增量）留下的。总按键才 4,838 次，字数不该比按键还多。已经记下，等对完账再改。
+    </p>
+  </section>`;
+}
+function TOTAL_DEL(){
+  const precise = isChar();
+  return precise
+    ? TODAY.apps.reduce((s,a)=>s + (a.cd || 0), 0)
+    : TODAY.apps.reduce((s,a)=>s + a.kd, 0);
+}
+
+/* =========================================================================
+   页面：适配器（Obsidian）
+   ========================================================================= */
+function pageAdapter(){
+  return `
+  <section id="adapter">
+    <p class="eyebrow">精确字数适配器</p>
+    <h2 class="sec">Obsidian</h2>
+    <p class="sub">让「字数」这个口径不止覆盖 WPS</p>
+
+    <div class="item">
+      <div class="h"><span class="dot"></span>运行中 · 端口 43617</div>
+      <div class="d">最近一次上报：<b>今天 17:42</b>（3 分钟前）</div>
+    </div>
+
+    <div class="item">
+      <div class="h">连接令牌</div>
+      <div class="d token">tst_7f3a91c4e08b52d6</div>
+      <div style="margin-top:14px; display:flex; gap:10px">
+        <button class="btn">复制</button>
+        <button class="btn">重新生成</button>
+      </div>
+      <div class="d" style="margin-top:12px; color:var(--muted)">
+        重新生成之后，插件那边要重新填一次，否则会连不上。
+      </div>
+    </div>
+
+    <div class="item">
+      <div class="h">装到 Obsidian 里</div>
+      <ol class="steps">
+        <li>打开 Obsidian → 设置 → 第三方插件 → 关闭「安全模式」</li>
+        <li>把 <code>typestat-obsidian</code> 文件夹放进库的 <code>.obsidian/plugins/</code></li>
+        <li>回到第三方插件列表，启用 TypeStat Bridge，把上面的令牌粘进去</li>
+      </ol>
+    </div>
+
+    <p class="caption">
+      适配器上报的是<b>字符数的变化量</b>，不是文档长度。这是这个项目里踩过的最大的一个坑：
+      WPS 的 <code>Range.Text.length</code> 给的是覆盖区域的长度，用它会得到一个比总按键数还大的字数。
+      现在的量法是逐次看 <code>doc.Characters.Count</code> 变了多少。
+    </p>
+  </section>`;
+}
+
+/* =========================================================================
+   页面：设置
+   ========================================================================= */
+function pageSettings(){
+  return `
+  <section id="settings">
+    <p class="eyebrow">设置</p>
+    <h2 class="sec">采集状态</h2>
+    <p class="sub">这部分不画图，只报事实</p>
+
+    <div class="item">
+      <div class="h"><span class="dot"></span>钩子运行中</div>
+      <div class="d">本次运行已捕获 <b>6,412</b> 个按键事件。看门狗每 30 秒查一次，
+        掉线会自动重挂。</div>
+      <div style="margin-top:14px"><button class="btn">重建钩子</button></div>
+    </div>
+
+    <h2 class="sec" style="margin-top:46px">已知限制</h2>
+    <p class="sub">这些不是 bug，是 Windows 的规矩，写出来免得你以为漏记了</p>
+
+    <div class="item"><div class="h">管理员窗口里的输入收不到</div>
+      <div class="d">以管理员身份运行的程序，普通权限的钩子挂不上去（UIPI 隔离）。
+        你以管理员身份运行 TypeStat 就能覆盖它们。</div></div>
+    <div class="item"><div class="h">部分游戏和安全软件会屏蔽钩子</div>
+      <div class="d">这类程序会主动挡住全局钩子，通常是反作弊或键盘加密的要求，绕不过去。</div></div>
+    <div class="item"><div class="h">密码框里的按键不统计</div>
+      <div class="d">系统标记为「安全输入」的输入框不给读，这是故意的，也不打算绕。</div></div>
+    <div class="item"><div class="h">中文字数需要适配器</div>
+      <div class="d">键盘层面只知道你按了几次键，<b>不知道输入法最后出了几个字</b>。
+        「字数」这一列要靠各应用的适配器上报。</div></div>
+
+    <h2 class="sec" style="margin-top:46px">关于数据</h2>
+    <p class="sub">这份数据是什么，不是什么</p>
+
+    <div class="item"><div class="h">不记录你写了什么</div>
+      <div class="d">只计数量，不留内容。数据库里存的是「某分钟某应用敲了多少次」，
+        <b>没有任何一个字段能还原出你打的字</b>。</div></div>
+    <div class="item"><div class="h">「按键数」和「字数」是两个量</div>
+      <div class="d">打一句「你好」按了 6 次键，最后只出来 2 个字。
+        顶栏的开关切的就是这两个口径，所有页面一起切。</div></div>
+    <div class="item"><div class="h">两个口径的覆盖面不一样</div>
+      <div class="d">按键数覆盖所有应用；字数只覆盖装了适配器的应用。
+        所以字数口径下的柱状图更矮，那是<b>地盘更小，不是打得少了</b>。</div></div>
+    <div class="item"><div class="h">数据库位置</div>
+      <div class="d"><code>%APPDATA%\com.typestat.app\typestat.db</code></div></div>
+
+    <h2 class="sec" style="margin-top:46px">还没覆盖到的</h2>
+    <p class="sub">下一个要做的</p>
+
+    <div class="item"><div class="h">Word / WPS / 浏览器网页</div>
+      <div class="d">计划走 UIA（UI Automation）读文档的字符数变化，
+        这样不用每个应用装一个插件。浏览器那边要处理富文本和 iframe，可能更慢。</div></div>
+  </section>`;
+}
+
+/* =========================================================================
+   路由 + 渲染
+   ========================================================================= */
+const PAGES = [
+  { id:"today",    label:"今天",   fn:pageToday },
+  { id:"hours",    label:"时段",   fn:pageHours },
+  { id:"duration", label:"时长",   fn:pageDuration },
+  { id:"trends",   label:"趋势",   fn:pageTrends },
+  { id:"heat",     label:"热力",   fn:pageHeat },
+  { id:"keys",     label:"键位",   fn:pageKeys },
+  { id:"apps",     label:"应用",   fn:pageApps },
+  { id:"detail",   label:"明细",   fn:pageDetail },
+  { id:"adapter",  label:"适配器", fn:pageAdapter },
+  { id:"settings", label:"设置",   fn:pageSettings },
+];
+
+let current = (location.hash || "#today").slice(1);
+if (!PAGES.some(p => p.id === current)) current = "today";
+
+function render(){
+  document.getElementById("nav").innerHTML = PAGES.map(p =>
+    `<a href="#${p.id}" ${p.id === current ? 'aria-current="page"' : ""}>${p.label}</a>`).join("");
+  document.getElementById("pages").innerHTML =
+    PAGES.map(p => p.fn()).join("") +
+    `<p class="foot">
+       设计稿 B · 全功能分页版。<br>
+       <b>今天（2026-09-23）的所有数字都是真的</b>，来自 typestat.db；
+       其余 13 天是为看布局造的确定性模拟数据（种子固定），并假设那些天适配器已经在跑。
+       键位热力图用的是近 7 天真实键频。<br><br>
+       原来五页里的功能一个没少，只是拆开了：今日的<b>时长</b>独立成一页、
+       <b>小时图</b>独立成一页、<b>应用分布</b>和<b>明细表</b>各一页、
+       设置里的<b>适配器</b>和<b>未覆盖应用</b>也单独成页。
+     </p>`;
+  document.querySelectorAll("#pages > section").forEach(s =>
+    s.classList.toggle("on", s.id === current));
+  window.scrollTo(0, 0);
+}
+
+document.getElementById("nav").addEventListener("click", e => {
+  const a = e.target.closest("a"); if (!a) return;
+  e.preventDefault();
+  current = a.getAttribute("href").slice(1);
+  location.hash = current;
+  render();
+});
+
+/* 键位图的缩放开关。线性映射会把绝大多数键挤进最浅的一档、整张图糊成一片，
+   所以默认平方根；留个开关是为了让人自己能看出来这件事。 */
+document.getElementById("pages").addEventListener("click", e => {
+  const b = e.target.closest(".kbtbtn"); if (!b) return;
+  kbsqrt = b.dataset.sqrt === "1";
+  render();
+});
+
+document.querySelectorAll("#metric button").forEach(b =>
+  b.addEventListener("click", () => {
+    metric = b.dataset.m;
+    document.querySelectorAll("#metric button").forEach(x =>
+      x.setAttribute("aria-pressed", String(x.dataset.m === metric)));
+    render();
+  }));
+
+document.getElementById("theme").addEventListener("click", e => {
+  const r = document.documentElement;
+  dark = r.dataset.theme !== "dark";
+  r.dataset.theme = dark ? "dark" : "light";
+  e.target.textContent = dark ? "浅色" : "深色";
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

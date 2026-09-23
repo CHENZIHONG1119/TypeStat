@@ -1,0 +1,1085 @@
+/*
+ * 设计令牌 —— 「编辑台」。
+ *
+ * 这一版把底色从冷灰换成暖纸色，并把「卡片」这套结构整体去掉了：
+ * 页面靠字号、行距和一条条横线分层，而不是靠一个个盒子。
+ * 依据是这份数据的真实用途——它不是仪表盘，是一份关于「你今天写了什么」
+ * 的记述，所以它更像一页稿纸。
+ *
+ * 两处不能动的东西：
+ *   1. --series-1 / --series-2 是经 validate_palette.js 双模式校验过的
+ *      （浅 CVD ΔE 24.7 / 深 26.8，目标线 8）。换底色不影响这对值的可分性，
+ *      但换色本身必须重跑校验，不要凭肉眼判断。
+ *   2. 旧令牌名（--surface/--plane/--text-*）保留为别名，值指向新令牌。
+ *      这样还没改到的组件（KeyboardHeatmap、preview）不会因为找不到变量而塌掉。
+ *
+ * 深色在两处声明：media query 跟随系统、[data-theme] 跟随手动切换，
+ * 两个方向都能压过对方，这是 useTheme 的实现前提。
+ */
+:root {
+  color-scheme: light;
+
+  /* --- 新令牌：纸、墨、线 --- */
+  --paper: #faf8f4;
+  --surface: #fffefb;
+  --ink: #191713;
+  --ink2: #5a554c;
+  --muted: #948d80;
+  --rule: #e6e1d7;
+  --band: rgba(25, 23, 19, 0.11);
+  --hatch: rgba(25, 23, 19, 0.16);
+  /* 键帽上「没按过」的底色。它必须比色阶最浅的一档还要中性，
+     否则「没按过」和「按了一次」看起来会一样。 */
+  --grid: #e6e1d7;
+  --axis: #d8d2c6;
+  --border: rgba(25, 23, 19, 0.1);
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+
+  /* --- 旧令牌名，指向新值，供尚未改写的组件使用 --- */
+  --plane: var(--paper);
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink2);
+  --text-muted: var(--muted);
+
+  --serif: Georgia, "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --paper: #121110;
+    --surface: #1a1816;
+    --ink: #f7f4ee;
+    --ink2: #b8b2a6;
+    --muted: #8a8478;
+    --rule: #2a2724;
+    --band: rgba(247, 244, 238, 0.14);
+    --hatch: rgba(247, 244, 238, 0.2);
+    --grid: #2a2724;
+    --axis: #383835;
+    --border: rgba(247, 244, 238, 0.1);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #121110;
+  --surface: #1a1816;
+  --ink: #f7f4ee;
+  --ink2: #b8b2a6;
+  --muted: #8a8478;
+  --rule: #2a2724;
+  --band: rgba(247, 244, 238, 0.14);
+  --hatch: rgba(247, 244, 238, 0.2);
+  --grid: #2a2724;
+  --axis: #383835;
+  --border: rgba(247, 244, 238, 0.1);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 外壳：顶栏 + 单栏正文 ---------- */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding: 14px 40px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+
+.brand {
+  font-size: 12.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.nav {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.nav-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  color: var(--ink);
+}
+
+.nav-item[aria-current="page"] {
+  color: var(--ink);
+  background: rgba(42, 120, 214, 0.09);
+}
+
+.topbar .spacer {
+  flex: 1;
+  min-width: 16px;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* 第二行筛选条。只有用到区间的页面才出现，所以它比顶栏矮一号。 */
+.rangebar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 40px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.rangebar .lbl {
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+/* 正文：单栏、居中、窄。窄是故意的——一行太长的数字没人读得下去。 */
+.page {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 52px 40px 90px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 26px;
+}
+
+.sec {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.sec + .sub,
+.sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 0 0 24px;
+}
+
+.dateline {
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 30px;
+}
+
+/* 主角。整页只有一个这么大的东西。 */
+.claim {
+  font-size: 23px;
+  line-height: 1.5;
+  color: var(--ink2);
+  margin: 0 0 4px;
+}
+
+.hero {
+  font-size: 62px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin: 0 0 26px;
+  font-weight: 400;
+}
+
+.hero em {
+  font-family: var(--serif);
+  font-style: normal;
+  font-size: 1.14em;
+  letter-spacing: -0.01em;
+}
+
+.hero .u {
+  font-size: 26px;
+  color: var(--ink2);
+  margin: 0 8px 0 4px;
+}
+
+.lede {
+  font-size: 15.5px;
+  line-height: 1.9;
+  color: var(--ink2);
+  margin: 0 0 6px;
+}
+
+.lede b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 图：没有框，只有基线和曲线 ---------- */
+
+.plot {
+  margin: 40px 0 8px;
+  position: relative;
+}
+
+.plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 图可以聚焦，用方向键逐点读——所以焦点圈必须看得见 */
+.plot:focus {
+  outline: none;
+}
+
+.plot:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 8px;
+  border-radius: 4px;
+}
+
+.axisx {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule);
+}
+
+/*
+ * 刻度用网格而不是 space-between。
+ *
+ * space-between 把标签按「份数」摊开，而数据点是按「格」定位的，两者对不齐——
+ * 24 个格子摊 9 个标签，中间那些会偏小半格。偏一点点比全错更糟：它看着像对的。
+ * 用和数据同宽的网格，刻度就**落在它标的那一格上**。
+ * 网格列数由调用方按数据点数写在 style 里。
+ */
+.axisgrid {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.axisgrid > span {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.keyline {
+  display: flex;
+  gap: 22px;
+  font-size: 12.5px;
+  color: var(--ink2);
+  margin-top: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.keyline > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.kl {
+  width: 20px;
+  height: 6px;
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
+}
+
+.kl-s1 {
+  background: var(--series-1);
+}
+
+.kl-s2 {
+  background: var(--series-2);
+}
+
+/* 「有精确字数」这一格刻意用中性灰而不是主题蓝：连着画下来时主题蓝会
+   变成一条实心蓝带，读起来像第三条数据线。它是注释，得待在图层后面。 */
+.kl-band {
+  background: var(--band);
+  box-shadow: inset 0 0 0 1px rgba(25, 23, 19, 0.07);
+}
+
+.kl-hatch {
+  background: repeating-linear-gradient(45deg, var(--hatch) 0 2px, transparent 2px 5px);
+  box-shadow: inset 0 0 0 1px var(--hatch);
+}
+
+.caption {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--muted);
+  margin: 16px 0 0;
+}
+
+.caption b {
+  color: var(--ink2);
+}
+
+/* 图上的十字准线与提示框 */
+.plot-tip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 12;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: nowrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.13);
+  color: var(--ink);
+}
+
+.plot-tip .tip-head {
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+
+.plot-tip .tip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.plot-tip .tip-row b {
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.plot-tip .tip-sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+/* ---------- 细账：一条横线分隔的紧凑行，不是四个盒子 ---------- */
+
+.ledger {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--rule);
+  margin-top: 48px;
+  padding-top: 26px;
+}
+
+.ledger > div {
+  padding-right: 20px;
+}
+
+.ledger .k {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+
+.ledger .v {
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger .v small {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+/* 每个数字自带一句定义。放这里而不是放页脚：读到一个数的时候，
+   解释必须就在它旁边，否则「删除率 5.0%」是删谁的 5% 得靠猜。 */
+.ledger .n {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 7px;
+}
+
+/* ---------- 应用条 ---------- */
+
+.wa {
+  display: grid;
+  grid-template-columns: 1fr 200px 108px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wa:last-child {
+  border-bottom: 0;
+}
+
+.wa .n {
+  font-size: 14.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wa .bar {
+  height: 4px;
+  min-width: 7px;
+  border-radius: 2px;
+  background: var(--series-1);
+  opacity: 0.85;
+}
+
+.wa .bar-h {
+  background: repeating-linear-gradient(45deg, var(--hatch) 0 3px, transparent 3px 7px);
+  box-shadow: inset 0 0 0 1px var(--hatch);
+  opacity: 1;
+  min-width: 16px;
+}
+
+.wa .v {
+  text-align: right;
+  font-size: 13px;
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
+}
+
+.wa .v em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---------- 表 ---------- */
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+table.data th {
+  text-align: right;
+  font-weight: 500;
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+table.data th:first-child {
+  text-align: left;
+}
+
+table.data td {
+  text-align: right;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink2);
+}
+
+table.data td:first-child {
+  text-align: left;
+  color: var(--ink);
+  font-variant-numeric: normal;
+}
+
+table.data tr:last-child td {
+  border-bottom: 0;
+}
+
+table.data tr.total td {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: 99px;
+  padding: 1px 7px;
+  margin-left: 9px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+.badge-precise {
+  color: var(--series-1);
+  border-color: color-mix(in srgb, var(--series-1) 35%, transparent);
+}
+
+/* ---------- 热力图（日期 × 小时） ---------- */
+
+.heat-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.heat-row + .heat-row {
+  margin-top: 2px;
+}
+
+.heat-day {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.heat-cells {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+}
+
+.heat-cell {
+  aspect-ratio: 1 / 1;
+  border-radius: 2px;
+  background: var(--grid);
+}
+
+.heat-axis {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-top: 7px;
+  text-align: center;
+  padding-left: 76px;
+}
+
+.ramp {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.ramp i {
+  display: block;
+  width: 15px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.ramp .gap {
+  flex: 1;
+}
+
+/* ---------- 设置页的条目 ---------- */
+
+.item {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.item:last-child {
+  border-bottom: 0;
+}
+
+.item .h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14.5px;
+  margin-bottom: 6px;
+}
+
+.item .d {
+  font-size: 13px;
+  color: var(--ink2);
+  line-height: 1.85;
+  max-width: 64em;
+}
+
+.item .d b,
+.item .d strong {
+  color: var(--ink);
+}
+
+.item .d code,
+.note code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: rgba(25, 23, 19, 0.05);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+:root[data-theme="dark"] .item .d code,
+:root[data-theme="dark"] .note code {
+  background: rgba(247, 244, 238, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .item .d code,
+  :root:where(:not([data-theme="light"])) .note code {
+    background: rgba(247, 244, 238, 0.08);
+  }
+}
+
+.steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--ink2);
+  line-height: 2;
+}
+
+/* ---------- 状态与控件 ---------- */
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  flex: none;
+  background: var(--series-1);
+}
+
+.dot-ok {
+  background: var(--good);
+}
+
+.dot-bad {
+  background: var(--critical);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink2);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--series-1);
+  color: var(--series-1);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-sm {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+/* 这个代码库里的第一张表单。跟 .btn 一个调子：一根线、一个圆角、不要底色——
+   填进去的是内容，不是控件。 */
+input[type="text"],
+input[type="password"] {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 6px 11px;
+  width: 100%;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+  outline: none;
+  border-color: var(--series-1);
+}
+
+/* 密钥用等宽：粘贴时一眼看得出有没有多带一个空格。 */
+input[type="password"] {
+  font-family: var(--mono);
+  letter-spacing: 0.5px;
+}
+
+input::placeholder {
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+/* 「模型看到的事实」：原样喂给模型的那张清单。等宽 + 可折行——用户要拿它
+   逐句核正文里的数字，所以字符必须一个不差地摆出来。 */
+.sheet {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 12px 0 0;
+}
+
+/* 两段互斥的分段控件。用 aria-pressed 上色，屏幕阅读器读到的状态
+   和眼睛看到的一致。 */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.seg-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.seg-btn:hover {
+  color: var(--ink);
+}
+
+.seg-btn[aria-pressed="true"] {
+  background: var(--series-1);
+  color: #fff;
+}
+
+/* 期条上「本期还没结束」那一格。不能点就必须看得出来——一个长得和别的
+   一模一样的按钮，按下去没反应，那是界面在骗人。 */
+.seg-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.seg-btn:disabled:hover {
+  color: var(--muted);
+}
+
+.tog {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.tog:hover {
+  color: var(--ink);
+}
+
+.note {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ink2);
+  margin: 0 0 14px;
+}
+
+.note b,
+.note strong {
+  color: var(--ink);
+}
+
+.note ul,
+.note ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.note li + li {
+  margin-top: 4px;
+}
+
+.field {
+  margin-top: 16px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.field-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+/* 令牌：等宽 + 可选中，用户要手动抄的时候不至于看错字符 */
+.token {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: 0.4px;
+  user-select: all;
+  background: rgba(25, 23, 19, 0.05);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+:root[data-theme="dark"] .token {
+  background: rgba(247, 244, 238, 0.08);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 32px 0;
+  text-align: center;
+}
+
+/* ---------- 键位热力图 ---------- */
+
+/* 定位全部用绝对像素：浮动的 flex/grid 间距会逐行累积误差，
+ * 累计几行之后竖列就对不齐了，而这正是这张图要保住的东西。 */
+.kb-wrap {
+  width: 100%;
+}
+
+.kb {
+  position: relative;
+  width: 100%;
+}
+
+.kb-key {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  /* 键帽文字用系统字体、不加粗：小字重色块上的字要尽量小干扰 */
+  font-weight: 500;
+  line-height: 1;
+  user-select: none;
+  cursor: default;
+  transition: filter 0.12s ease;
+}
+
+.kb-key:hover {
+  filter: brightness(1.12);
+}
+
+.kbm-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin: 4px 0 14px;
+}
+
+.kbm-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--ink2);
+}
+
+.kbm-stats b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.kbm-offmap {
+  color: var(--muted);
+}
+
+.kbm-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.kbm-tip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border: 1px solid;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  white-space: nowrap;
+}
+
+.kbm-tip .tip-sub {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.kbm-legend {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.kbm-legend-label {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.kbm-ramp {
+  display: block;
+  width: 104px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+/* 「没按过」的那一格。它得跟色阶最浅一档区分开，否则
+   「没按过」和「按了一次」看起来会一模一样。 */
+.kbm-none-swatch {
+  display: block;
+  width: 15px;
+  height: 9px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* ---------- 两列对照行（图外的键、合计等） ---------- */
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13.5px;
+  color: var(--ink2);
+}
+
+.kv:last-child {
+  border-bottom: 0;
+}
+
+.kv b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.kv b.muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.foot {
+  margin-top: 56px;
+  font-size: 12.5px;
+  line-height: 1.95;
+  color: var(--muted);
+  border-top: 1px solid var(--rule);
+  padding-top: 22px;
+}
+
+.foot b {
+  color: var(--ink2);
+}

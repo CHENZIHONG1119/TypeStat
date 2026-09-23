@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>TypeStat 统计状态</title>
+    <script type="text/javascript" src="../js/config.js"></script>
+    <script type="text/javascript" src="status.js"></script>
+</head>
+
+<body>
+    <h1>TypeStat 统计状态</h1>
+
+    <div id="alive" class="banner">正在读取…</div>
+
+    <h2>计数</h2>
+    <table id="counters"></table>
+
+    <h2>增删映射（只在兜底时才有用）</h2>
+    <div id="learnBox" class="banner"></div>
+    <p class="hint" id="mapHint"></p>
+    <p class="hint">
+        <b>正常情况下这一段不用管。</b>字符数是拿<b>文档字数的变化量</b>算的，
+        增删方向也由字数的涨跌决定，压根不需要知道 WPS 的枚举值等于几。<br>
+        只有在「读不到文档字数」（横幅会标红说明）时，才退回老路：靠下面的映射认增删方向、
+        靠 Range 量大小。那时才有「记反了」这种事——按一次退格看下面「最近事件」里
+        那一条被记成什么，再用这两个按钮纠正。
+    </p>
+    <button onclick="flip()">翻转增删映射（手动指定）</button>
+    <button onclick="recalibrate()">恢复自动校准</button>
+    <span id="flipMsg" class="ok"></span>
+
+    <h2>最近事件</h2>
+    <p class="hint">
+        这是加载项收到的原始事件，<b>不含正文内容</b>——只记长度，不记文字。
+        「类型」列是 WPS 给的 changeType 原值。<br>
+        <b>「字数」才是被计入的那一列</b>：这次事件之后文档有多少个字符，
+        计数用的是它和上一条的差（判定的 +N / −N 就是那个差）。<br>
+        「长度」是 <code>Range.Text.length</code>，「跨度」是 <code>Range.End − Range.Start</code>。
+        这两列<b>现在只是证据</b>，不参与计数——真机上实测过它们给的不是增量：
+        敲 4 个字，它们报的是 11、13、14、15、16（<b>整段的长度在长</b>），
+        而且每一行两个值都相等，所以「哪个对得上」这种判据从原理上发现不了这个错。
+    </p>
+    <table id="events">
+        <thead>
+            <tr><th>时间</th><th class="num">类型</th><th class="num">长度</th><th class="num">跨度</th><th class="num">字数</th><th>文档</th><th>判定</th></tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <p class="hint">
+        「文档」列是 `doc.Name`。<b>基线是按文档名重建的</b>——所以这一列空着、
+        或者两个文档显示成同一个名字，就会拿 A 文档的字数去减 B 文档的字数，
+        差出一个几千的假数字。这是排查「切文档导致数字暴涨」唯一的线索。
+    </p>
+
+    <h2>本次会话每分钟已上报</h2>
+    <p class="hint">
+        <b>这张表是用来和 TypeStat 数据库对账的。</b>两边同一分钟的数应该一致；
+        如果库里明显更大（比如正好是这里的整数倍），说明<b>有别的加载项实例
+        也在往同一个接收端上报</b>——那种情况下库里的数是真数乘实例数，
+        而这里显示的才是这一次会话真正发出的。
+    </p>
+    <table id="byMinute"></table>
+
+    <h2>连通性</h2>
+    <button onclick="test()">测试连接</button>
+    <span id="testMsg"></span>
+
+    <script>
+        render();
+        setInterval(render, 1000);
+    </script>
+</body>
+
+<style>
+    body {
+        font-family: system-ui, "Microsoft YaHei", sans-serif;
+        font-size: 13px;
+        color: #0b0b0b;
+        margin: 16px;
+    }
+
+    h1 {
+        font-size: 15px;
+        margin: 0 0 12px;
+    }
+
+    h2 {
+        font-size: 12px;
+        color: #52514e;
+        margin: 18px 0 6px;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    td,
+    th {
+        padding: 4px 8px;
+        border-bottom: 1px solid #e1e0d9;
+        text-align: left;
+        font-weight: 400;
+    }
+
+    th {
+        color: #898781;
+        font-size: 11px;
+    }
+
+    td.num,
+    th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* 判定列的颜色：新增偏蓝、删除偏橙，与 TypeStat 里两个口径的配色一致 */
+    td.ins {
+        color: #2a78d6;
+    }
+
+    td.del {
+        color: #eb6834;
+    }
+
+    td.ign {
+        color: #898781;
+    }
+
+    td .muted {
+        color: #898781;
+    }
+
+    /* 文档名可能很长，截断即可——这里只需要看「换没换文档」，不需要看全名 */
+    td .docname {
+        display: inline-block;
+        max-width: 16em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: bottom;
+    }
+
+    .banner {
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #e1e0d9;
+        background: #f9f9f7;
+        line-height: 1.6;
+    }
+
+    .banner.bad {
+        border-color: #d03b3b;
+        background: #fdf0f0;
+    }
+
+    .banner.good {
+        border-color: #0ca30c;
+        background: #f0faf0;
+    }
+
+    .hint {
+        color: #52514e;
+        line-height: 1.7;
+        margin: 6px 0;
+    }
+
+    /* 校准证据：横幅里嵌的一小块，用等宽字对齐数字，一眼扫得出对不上的那一列 */
+    .samples {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px dashed rgba(11, 11, 11, 0.15);
+    }
+
+    .samples ol {
+        margin: 4px 0 0;
+        padding-left: 22px;
+        font-family: Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.7;
+    }
+
+    button {
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 12px;
+        border: 1px solid rgba(11, 11, 11, 0.15);
+        border-radius: 8px;
+        background: #fcfcfb;
+        cursor: pointer;
+    }
+
+    button:hover {
+        border-color: #c3c2b7;
+    }
+
+    .ok {
+        color: #0ca30c;
+        margin-left: 8px;
+    }
+
+    .err {
+        color: #d03b3b;
+    }
+
+    code {
+        font-family: Consolas, monospace;
+        background: #f9f9f7;
+        border: 1px solid #e1e0d9;
+        border-radius: 4px;
+        padding: 0 4px;
+    }
+</style>
+
+</html>

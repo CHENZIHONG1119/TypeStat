@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TypeStat 设计稿 A · 一天</title>
+<style>
+/* ============ 令牌（与 src/theme.ts 同源，已过色觉校验） ============ */
+:root{
+  color-scheme: light;
+  --plane:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834; --good:#0ca30c;
+  --hatch:rgba(11,11,11,.13);
+}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])){
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19;
+  --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926;
+  --hatch:rgba(255,255,255,.15);
+}}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --plane:#0d0d0d; --surface:#1a1a19;
+  --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926;
+  --hatch:rgba(255,255,255,.15);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--plane); color:var(--ink);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+b,strong{font-weight:650}
+.num{font-variant-numeric:tabular-nums}
+
+/* ============ 顶栏 ============ */
+.bar{
+  display:flex; align-items:center; gap:14px;
+  padding:12px 28px; background:var(--surface);
+  border-bottom:1px solid var(--border);
+  position:sticky; top:0; z-index:5;
+}
+.logo{font-weight:650; letter-spacing:.02em; font-size:14px}
+.logo i{color:var(--s1); font-style:normal}
+.sp{flex:1}
+.seg{display:inline-flex; border:1px solid var(--border); border-radius:7px; overflow:hidden}
+.seg button{
+  appearance:none; border:0; border-right:1px solid var(--border);
+  background:var(--surface); color:var(--ink2);
+  font:inherit; font-size:12px; padding:5px 13px; cursor:pointer;
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--s1); color:#fff}
+.pill{
+  display:inline-flex; align-items:center; gap:6px; font-size:12px;
+  color:var(--ink2); border:1px solid var(--border); border-radius:999px; padding:4px 11px;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--good)}
+.ghost{
+  appearance:none; border:1px solid var(--border); background:var(--surface);
+  color:var(--ink); font:inherit; font-size:12px; border-radius:7px;
+  padding:5px 11px; cursor:pointer;
+}
+.ghost:hover{border-color:var(--axis)}
+
+/* ============ 布局 ============ */
+.wrap{max-width:1180px; margin:0 auto; padding:32px 28px 64px}
+
+.dayline{display:flex; align-items:baseline; gap:14px; margin-bottom:26px}
+.dayline h1{font-size:30px; font-weight:680; letter-spacing:-.02em; margin:0}
+.dayline .d{color:var(--muted); font-size:14px}
+.dayline .live{
+  margin-left:auto; font-size:12px; color:var(--muted);
+  display:inline-flex; align-items:center; gap:6px;
+}
+.dayline .live b{color:var(--ink2); font-weight:600}
+
+/* ============ 主视觉：一天的时间带 ============ */
+.band{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px 22px 14px}
+.band-head{display:flex; align-items:flex-start; gap:20px; margin-bottom:6px}
+.band-head h2{font-size:15px; font-weight:640; margin:0 0 3px}
+.band-head p{margin:0; font-size:12.5px; color:var(--muted); line-height:1.6}
+.legend{margin-left:auto; display:flex; gap:16px; font-size:12px; color:var(--ink2); flex-wrap:wrap}
+.legend span{display:inline-flex; align-items:center; gap:7px; white-space:nowrap}
+.sw{width:22px; height:11px; border-radius:3px; display:inline-block; border:1px solid var(--border)}
+.sw.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 3px,transparent 3px 7px)}
+.sw.only{background:var(--s1)}
+.sw.none{background:transparent}
+/* 质量带的小样：和数据线下的那条一致 */
+.sw.qual{width:22px; height:6px; border-radius:2px}
+.sw.qual.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 5px);
+           box-shadow:inset 0 0 0 1px var(--hatch)}
+.sw.qual.only{background:var(--s1)}
+#band{width:100%}
+#band svg{display:block; width:100%; height:auto; overflow:visible}
+
+/* 悬停提示 */
+.tip{
+  position:fixed; z-index:30; pointer-events:none; opacity:0;
+  transition:opacity .1s; background:var(--surface);
+  border:1px solid var(--border); border-radius:9px; padding:9px 12px;
+  font-size:12.5px; box-shadow:0 6px 22px rgba(0,0,0,.14); min-width:150px;
+}
+.tip .th{font-weight:640; margin-bottom:5px}
+.tip .tr{display:flex; justify-content:space-between; gap:18px; color:var(--ink2)}
+.tip .tr b{color:var(--ink); font-variant-numeric:tabular-nums}
+.tip .warn{margin-top:6px; color:var(--muted); font-size:11.5px; line-height:1.5}
+
+/* ============ 三个大数字 ============ */
+.figs{display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:22px}
+.fig{background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px 22px}
+.fig .k{font-size:12.5px; color:var(--muted); margin-bottom:8px}
+.fig .v{font-size:34px; font-weight:660; letter-spacing:-.02em; line-height:1.1}
+.fig .v small{font-size:15px; font-weight:500; color:var(--ink2); letter-spacing:0}
+.fig .n{font-size:12px; color:var(--ink2); margin-top:9px; line-height:1.6}
+.fig .n em{font-style:normal; color:var(--muted)}
+
+/* ============ 次要：一行细账 ============ */
+.row{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--border);
+     border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-top:18px}
+.cell{background:var(--surface); padding:16px 20px}
+.cell .k{font-size:12px; color:var(--muted); margin-bottom:5px}
+.cell .v{font-size:19px; font-weight:620; font-variant-numeric:tabular-nums}
+
+/* ============ 应用分布 ============ */
+.apps{margin-top:18px; background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px 22px}
+.apps h2{font-size:14px; font-weight:640; margin:0 0 2px}
+.apps .sub{font-size:12px; color:var(--muted); margin:0 0 16px}
+.arow{display:grid; grid-template-columns:170px 1fr 130px; align-items:center; gap:14px; padding:7px 0}
+.arow .an{font-size:13px; display:flex; align-items:center; gap:8px; overflow:hidden}
+.arow .an span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.arow .ab{height:15px; border-radius:3px; background:var(--s1)}
+.arow .ab.h{background:repeating-linear-gradient(45deg,var(--hatch) 0 4px,transparent 4px 9px);
+            box-shadow:inset 0 0 0 1px var(--hatch)}
+.arow .av{font-size:12.5px; color:var(--ink2); text-align:right; font-variant-numeric:tabular-nums}
+.arow .av em{font-style:normal; color:var(--muted)}
+
+footer{margin-top:26px; font-size:12px; color:var(--muted); line-height:1.8}
+footer code{font-family:ui-monospace,Consolas,monospace; background:var(--plane);
+            border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="logo">Type<i>Stat</i></span>
+  <span class="sp"></span>
+  <div class="seg" id="metric" role="group" aria-label="统计口径">
+    <button data-m="key" aria-pressed="true">按键</button>
+    <button data-m="char" aria-pressed="false">字数</button>
+  </div>
+  <span class="pill"><i class="dot"></i>钩子运行中</span>
+  <button class="ghost" id="theme">深色</button>
+</div>
+
+<div class="wrap">
+
+  <div class="dayline">
+    <h1>今天</h1>
+    <span class="d">9 月 23 日 星期三</span>
+    <span class="live">第一次输入 <b>16:03</b> · 最后 <b>20:11</b></span>
+  </div>
+
+  <!-- 主视觉：一天 -->
+  <section class="band">
+    <div class="band-head">
+      <div>
+        <h2>今天的时间线</h2>
+        <p id="bandsub">按小时看输入的分布 · 下面那条细带标出每小时的数能不能信</p>
+      </div>
+      <div class="legend">
+        <span><i class="sw qual only"></i>有精确字数</span>
+        <span><i class="sw qual h"></i>只有按键数</span>
+      </div>
+    </div>
+    <div id="band"></div>
+  </section>
+
+  <!-- 三个数字：时间 / 强度 / 快慢 -->
+  <div class="figs">
+    <div class="fig">
+      <div class="k">坐下来的时间</div>
+      <div class="v num">1 小时 51 分</div>
+      <div class="n">相邻两次输入间隔 ≤ 5 分钟算同一段<br><em>最长一段 1 小时 2 分</em></div>
+    </div>
+    <div class="fig">
+      <div class="k">其中真正在敲</div>
+      <div class="v num">82 <small>分钟</small></div>
+      <div class="n">有按键的分钟数<br><em>另外 29 分钟在想</em></div>
+    </div>
+    <div class="fig">
+      <div class="k">速度</div>
+      <div class="v num" id="v-speed">58.2 <small>键 / 分</small></div>
+      <div class="n" id="n-speed">按键数 ÷ 有输入的 82 分钟</div>
+    </div>
+  </div>
+
+  <!-- 细账 -->
+  <div class="row">
+    <div class="cell"><div class="k" id="k-in">敲入</div><div class="v" id="v-in">4,838</div></div>
+    <div class="cell"><div class="k" id="k-del">删掉</div><div class="v" id="v-del">240</div></div>
+    <div class="cell"><div class="k">删除率</div><div class="v">5.0%</div></div>
+    <div class="cell"><div class="k">字数覆盖率</div><div class="v">69%</div></div>
+  </div>
+
+  <!-- 应用 -->
+  <section class="apps">
+    <h2>在哪儿写的</h2>
+    <p class="sub">斜纹的应用拿不到精确字数——它不是在偷懒，是量不到</p>
+    <div id="applist"></div>
+  </section>
+
+  <footer>
+    设计稿 A · 用真实数据渲染（2026-09-23）。口径开关可以点，主图会跟着变——
+    切到「字数」时只剩 17 时一条线，其余时段变成斜纹底：<b>不是没打字，是量不到</b>。<br>
+    斜纹在任何口径下都只表示一件事：<code>这一段我们知道你在敲，但不知道敲了几个字</code>。
+  </footer>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+/* ================= 真实数据（取自今天的库） ================= */
+const HOURS = [
+  { h:16, ki:2307, ci:0,    hc:false },
+  { h:17, ki:2109, ci:7415, hc:true  },  // WPS 适配器从这一刻起生效
+  { h:19, ki:200,  ci:0,    hc:false },
+  { h:20, ki:222,  ci:0,    hc:false },
+];
+const APPS = [
+  { name:"wps.exe",              ki:3340, hc:true  },
+  { name:"WindowsTerminal.exe",  ki:1432, hc:false },
+  { name:"Weixin.exe",           ki:57,   hc:false },
+  { name:"msedge.exe",           ki:7,    hc:false },
+  { name:"哔哩哔哩.exe",           ki:2,    hc:false },
+];
+const SUMMARY = {
+  charInput:7415, charDelete:118, keyInput:4838, keyDelete:240,
+  sessionMinutes:111, activeMinutes:82, longestMinutes:62,
+  keySpeed:58.2, charSpeed:494.3,
+};
+const byHour = h => HOURS.find(x => x.h === h) || { h, ki:0, ci:0, hc:false };
+
+/* ================= 状态 ================= */
+let metric = "key";
+const $ = s => document.querySelector(s);
+const fmt = n => n.toLocaleString("zh-CN");
+
+/* ================= 主图：24 小时时间带 ================= */
+const W = 1136, H = 206, PL = 10, PR = 10, PT = 14, PB = 48;
+const IW = W - PL - PR, IH = H - PT - PB;
+const slot = IW / 24;
+const xAt  = h => PL + (h + .5) * slot;          // 该小时的中心
+const xEdge= h => PL + h * slot;                  // 该小时的左边界
+const MAXK = 2500;                                // 固定刻度，免得切换口径时纵向跳
+const MAXC = 8000;
+const MAX  = () => metric === "key" ? MAXK : MAXC;
+const yAt  = v => PT + IH - (v / MAX()) * IH;
+const base = PT + IH;
+
+/** 面积路径：单调平滑，曲线**穿过**每个真实数据点（不甩出去）。 */
+function smoothPath(pts) {
+  if (!pts.length) return "";
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    const mx = (x0 + x1) / 2;
+    d += ` C ${mx} ${y0}, ${mx} ${y1}, ${x1} ${y1}`;
+  }
+  return d;
+}
+
+function render() {
+  const precise = metric === "char";
+  // 这一小时在**当前口径下**的值。字数口径下没精确数据的小时是 null：
+  // 给 0 就等于说「这一小时一个字没打」，那是谎话。
+  const val = h => { const p = byHour(h); return precise ? (p.hc ? p.ci : null) : p.ki; };
+
+  const pts = [];
+  for (let h = 0; h < 24; h++) { const v = val(h); if (v !== null) pts.push([xAt(h), yAt(v)]); }
+
+  // 质量带：紧贴基线下面的一条细带，只回答一个问题——
+  // **这一小时的数能不能信**。所以它是通高背景纹理的替代品：
+  // 背景纹理会被高高的面积盖住（16 时那个峰就盖住了自己那格），
+  // 而它不占数据的地盘，也永远不会被挡。
+  // 它不表示任何量级，所以放在数据之外是对的。
+  let qual = "";
+  for (let h = 0; h < 24; h++) {
+    const p = byHour(h);
+    if (p.ki === 0) continue;                       // 没打字：留空
+    const fill = p.hc ? "var(--s1)" : "url(#hatch)";
+    qual += `<rect x="${xEdge(h) + 1.5}" y="${base + 12}" width="${slot - 3}" height="7"
+              rx="2" fill="${fill}"/>`;
+  }
+
+  // 每小时的悬停区（比数据点宽，好点中）
+  let hits = "";
+  for (let h = 0; h < 24; h++) {
+    hits += `<rect class="hit" data-h="${h}" x="${xEdge(h)}" y="${PT}"
+              width="${slot}" height="${IH}" fill="transparent" style="cursor:crosshair"/>`;
+  }
+
+  // 横轴刻度：每 3 小时
+  let axis = "";
+  for (let h = 0; h < 24; h += 3) {
+    axis += `<text x="${xAt(h)}" y="${H - 10}" text-anchor="middle"
+              font-size="11" fill="var(--muted)">${h}时</text>`;
+  }
+
+  const area = pts.length
+    ? smoothPath(pts) + ` L ${pts[pts.length-1][0]} ${base} L ${pts[0][0]} ${base} Z`
+    : "";
+
+  $("#band").innerHTML = `
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="今天每小时的输入量">
+    <defs>
+      <pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse"
+               patternTransform="rotate(45)">
+        <rect width="5" height="5" fill="transparent"/>
+        <line x1="0" y1="0" x2="0" y2="5" stroke="var(--hatch)" stroke-width="2.6"/>
+      </pattern>
+      <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="var(--s1)" stop-opacity=".22"/>
+        <stop offset="100%" stop-color="var(--s1)" stop-opacity=".04"/>
+      </linearGradient>
+    </defs>
+
+    ${qual}
+
+    <!-- 基线 -->
+    <line x1="${PL}" y1="${base}" x2="${W-PR}" y2="${base}"
+          stroke="var(--axis)" stroke-width="1"/>
+
+    ${area ? `<path d="${area}" fill="url(#fade)"/>` : ""}
+    ${pts.length ? `<path d="${smoothPath(pts)}" fill="none" stroke="var(--s1)"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ""}
+
+    <!-- 真实数据点：曲线是插出来的，点不能省 -->
+    ${pts.map(([x,y]) => `<circle cx="${x}" cy="${y}" r="4" fill="var(--surface)"
+        stroke="var(--s1)" stroke-width="2"/>`).join("")}
+
+    ${axis}
+    ${hits}
+  </svg>`;
+
+  bindHover();
+}
+
+/* ================= 悬停 ================= */
+function bindHover() {
+  const tip = $("#tip");
+  document.querySelectorAll(".hit").forEach(el => {
+    el.addEventListener("mousemove", ev => {
+      const h = +el.dataset.h, p = byHour(h);
+      const precise = metric === "char";
+      let body, warn = "";
+      if (p.ki === 0) {
+        body = `<div class="tr"><span>没打字</span></div>`;
+      } else if (precise && !p.hc) {
+        body = `<div class="tr"><span>按键数</span><b>${fmt(p.ki)}</b></div>`;
+        warn = "这一小时没有精确字数——量不到，不是 0。";
+      } else {
+        body = precise
+          ? `<div class="tr"><span>字数</span><b>${fmt(p.ci)}</b></div>
+             <div class="tr"><span>按键数</span><b>${fmt(p.ki)}</b></div>`
+          : `<div class="tr"><span>按键数</span><b>${fmt(p.ki)}</b></div>
+             <div class="tr"><span>删除键</span><b>${fmt(p.h===16?73:p.h===17?146:p.h===19?11:10)}</b></div>`;
+      }
+      tip.innerHTML = `<div class="th">${h}:00 – ${h+1}:00</div>${body}` +
+                      (warn ? `<div class="warn">${warn}</div>` : "");
+      tip.style.opacity = 1;
+      tip.style.left = Math.min(ev.clientX + 16, innerWidth - tip.offsetWidth - 12) + "px";
+      tip.style.top  = Math.max(ev.clientY - tip.offsetHeight - 14, 8) + "px";
+    });
+    el.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+  });
+}
+
+/* ================= 应用分布 ================= */
+function renderApps() {
+  const max = Math.max(...APPS.map(a => a.ki));
+  $("#applist").innerHTML = APPS.map(a => `
+    <div class="arow">
+      <div class="an"><span title="${a.name}">${a.name}</span></div>
+      <div class="ab${a.hc ? "" : " h"}" style="width:${Math.max(a.ki/max*100, 1.2)}%"></div>
+      <div class="av">${fmt(a.ki)} 键${a.hc ? "" : " <em>· 无字数</em>"}</div>
+    </div>`).join("");
+}
+
+/* ================= 口径切换 ================= */
+function applyMetric() {
+  const precise = metric === "char";
+  document.querySelectorAll("#metric button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.m === metric)));
+
+  $("#v-speed").innerHTML = precise
+    ? `${SUMMARY.charSpeed.toFixed(1)} <small>字 / 分</small>`
+    : `${SUMMARY.keySpeed.toFixed(1)} <small>键 / 分</small>`;
+  $("#n-speed").textContent = precise
+    ? "精确字数 ÷ 有精确字数的 15 分钟"
+    : "按键数 ÷ 有输入的 82 分钟";
+
+  $("#v-in").textContent  = precise ? fmt(SUMMARY.charInput)  : fmt(SUMMARY.keyInput);
+  $("#v-del").textContent = precise ? fmt(SUMMARY.charDelete) : fmt(SUMMARY.keyDelete);
+  $("#k-in").textContent  = precise ? "敲入字数" : "敲入按键";
+  $("#k-del").textContent = precise ? "删掉字数" : "删掉按键";
+
+  $("#bandsub").innerHTML = precise
+    ? `只画得出有精确字数的那一小时 · <b>斜纹处是量不到，不是 0</b>`
+    : `按小时看输入的分布 · 下面那条细带标出每小时的数能不能信`;
+  render();
+}
+
+document.querySelectorAll("#metric button").forEach(b =>
+  b.addEventListener("click", () => { metric = b.dataset.m; applyMetric(); }));
+
+/* ================= 主题 ================= */
+$("#theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme
+    ? root.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme:dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  $("#theme").textContent = dark ? "深色" : "浅色";
+  render();
+});
+
+renderApps();
+applyMetric();
+</script>
+</body>
+</html>
