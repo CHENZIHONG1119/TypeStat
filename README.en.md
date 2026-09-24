@@ -130,8 +130,12 @@ settings — both are shown on TypeStat's "Adapter" page.
 ### The receiver
 
 Both adapters POST `{app, input, delete}` with an `X-TypeStat-Token` header to
-`http://127.0.0.1:<port>/report`. The port is the first free one in 42180–42189; the
-token is regenerated at random on every launch.
+`http://127.0.0.1:<port>/report`. The port is the first free one in 42180–42189,
+re-picked on each launch (in practice it never moves, since nothing else uses that
+range). **The token is generated once on first run and then kept** — rotate it with the
+button on the "Adapter" page, after which the copy stored inside the plug-in has to be
+updated too. (Deliberate: rotating it on every launch would mean re-copying it after
+every reboot.)
 
 The receiver binds to loopback only and **validates the token on every request** — that
 is the entire defense. CORS is `*`, because the add-in page runs from a `file://` origin,
@@ -160,7 +164,7 @@ Not bugs — Windows' rules. Listed so you do not think something was missed.
 ```
 src/                    React frontend (no router; pages dispatched by hand)
   pages/                the eleven pages
-  components/           LinePlot, KeyboardHeatmap
+  components/           LinePlot, KeyboardHeatmap, DayBar
   dev/mockBackend.ts    fake backend for browsing the UI via app-preview.html
 src-tauri/              Rust backend
   hook/                 global hooks (keyboard, mouse, watchdog)

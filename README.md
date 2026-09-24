@@ -122,7 +122,10 @@ cd .. && npm run build        # 前端（内含 tsc --noEmit）
 
 两个适配器都往 `http://127.0.0.1:<port>/report` POST 一个
 `{app, input, delete}`，带上 `X-TypeStat-Token` 头。端口在 42180–42189 里挑第一个
-空闲的，令牌每次启动随机生成。
+空闲的（每次启动都重挑，但只有它自己在用这一段，所以实际上不会变）；
+**令牌在首次运行时生成并永久保存，之后固定不变**——要换就点「适配器」页的
+「换一个」，换了之后装在插件里的那一份要跟着改。
+（这一条是有意为之：要是每次启动都换，你每次开机都得重新抄一遍令牌。）
 
 接收端只绑回环地址，**每个请求都验令牌**，这是唯一的防线——CORS 是 `*`，
 因为加载项页面跑在 `file://` 源上，卡住 Origin 挡不住真正的攻击者
@@ -149,7 +152,7 @@ cd .. && npm run build        # 前端（内含 tsc --noEmit）
 ```
 src/                    React 前端（无路由库，自己分派）
   pages/                十一页
-  components/           LinePlot、KeyboardHeatmap
+  components/           LinePlot、KeyboardHeatmap、DayBar
   dev/mockBackend.ts    浏览器里用的假后端，配合 app-preview.html 预览界面
 src-tauri/              Rust 后端
   hook/                 全局钩子（键盘、鼠标、看门狗）
